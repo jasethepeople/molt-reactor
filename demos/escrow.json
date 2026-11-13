@@ -1,0 +1,46 @@
+{
+  "name": "escrow",
+  "version": 1,
+  "gas_budget": 256,
+  "max_trigger_depth": 4,
+  "trigger": { "event_type": "escrow_action" },
+  "state_key": ["/escrow_id"],
+  "rules": [
+    {
+      "when": { "op": "payload_eq", "path": "/action", "value": "fund" },
+      "emit": {
+        "type": "balance.delta",
+        "claims": ["balance"],
+        "payload": {
+          "account": { "field": "actor" },
+          "delta": { "sub": [0, { "field": "payload:/amount" }] }
+        }
+      }
+    },
+    {
+      "when": { "op": "payload_eq", "path": "/action", "value": "deliver" },
+      "emit": {
+        "type": "escrow.delivered",
+        "claims": ["status"],
+        "payload": { "escrow_id": { "field": "payload:/escrow_id" } }
+      }
+    },
+    {
+      "when": {
+        "op": "and",
+        "conditions": [
+          { "op": "payload_eq", "path": "/action", "value": "release" },
+          { "op": "state_eq", "path": "/delivered", "value": true }
+        ]
+      },
+      "emit": {
+        "type": "balance.delta",
+        "claims": ["balance"],
+        "payload": {
+          "account": { "field": "state:/seller" },
+          "delta": { "field": "state:/amount" }
+        }
+      }
+    }
+  ]
+}

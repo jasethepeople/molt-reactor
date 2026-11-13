@@ -1,0 +1,21 @@
+[package]
+name = "molt-reactor"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic, gas-metered reactors for MOLT event ledgers"
+license = "MIT"
+
+[lib]
+name = "molt_reactor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "molt-reactor"
+path = "src/main.rs"
+
+[dependencies]
+ed25519-dalek = "2.2"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

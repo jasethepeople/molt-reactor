@@ -1,0 +1,14 @@
+{
+  "name": "unsafe-float-order",
+  "version": 1,
+  "gas_budget": 64,
+  "trigger": { "event_type": "example.input" },
+  "state_key": ["/id"],
+  "rules": [
+    {
+      "when": { "op": "payload_eq", "path": "/go", "value": true },
+      "emit": { "type": "example.output", "payload": { "computed": 0.1 } }
+    }
+  ],
+  "implementation_note": "order-sensitive f64 sum"
+}

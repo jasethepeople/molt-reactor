@@ -1,0 +1,9 @@
+{
+  "name": "unsafe-hashmap-order",
+  "version": 1,
+  "gas_budget": 64,
+  "trigger": { "event_type": "example.input" },
+  "state_key": ["/id"],
+  "rules": [],
+  "implementation_note": "HashMap::keys() determines emitted event order"
+}
