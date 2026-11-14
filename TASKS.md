@@ -7,11 +7,11 @@
 - [x] Run baseline tests and demo; commit the documentation phase.
 
 ## Phase 2 — Rust alignment
-- [ ] Gate the `deliver` state exception to `escrow_action`; add its regression test.
-- [ ] Add current depth and both conflicting reactor names to structured errors.
-- [ ] Enforce i64-only payload/definition numbers and implement canonical JSON bytes.
-- [ ] Validate strict VerifiedRange shape and exact replay metadata; add `Engine::verify`.
-- [ ] Add regression tests, run all tests/demo/lints, and commit.
+- [x] Gate the `deliver` state exception to `escrow_action`; add its regression test.
+- [x] Add current depth and both conflicting reactor names to structured errors.
+- [x] Enforce i64-only payload/definition numbers and implement canonical JSON bytes.
+- [x] Validate strict VerifiedRange shape and exact replay metadata; add `Engine::verify`.
+- [x] Add regression tests; `cargo test --all-targets` passes 58 integration tests; demo, release build, formatting, and strict Clippy pass.
 
 ## Phase 3 — Conformance vectors
 - [ ] Add eight versioned JSON vectors covering emit, gas, conflict, depth, replay, deliver scoping, orphan marker, and out-of-i64.

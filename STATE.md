@@ -10,7 +10,11 @@
 - Known spec/implementation gaps are tracked in Phase 2; this phase intentionally changed documentation only.
 
 ## Phase 2 — Rust alignment
-- Status: not started.
+- Status: complete; implementation, tests, and documentation are verified. Phase 2 will be committed and pushed before Phase 3 starts.
+- `cargo test --all-targets`: 58 integration tests passed.
+- `cargo run --quiet -- demo`: passed; 4 inputs → 3 outputs, replay identical, gas 82/256.
+- `cargo build --release`, `cargo fmt --all -- --check`, and `cargo clippy --all-targets --all-features -- -D warnings`: passed.
+- Canonical JSON/i64 boundaries, strict range and replay-marker validation, stable error codes, chain depth and deliver scoping, and `Engine::verify` are implemented.
 
 ## Phase 3 — Conformance vectors
 - Status: not started.
@@ -21,9 +25,9 @@
 
 ## Acceptance status
 - MOLT v1.1 documentation: complete.
-- Rust implementation aligned: pending Phase 2.
+- Rust implementation aligned: complete; all 58 integration tests pass.
 - Eight conformance vectors: pending.
 - SpotSignal local MVP: pending.
 
 ## Next
-Commit Phase 1, then start Phase 2 after re-reading STATE.md, TASKS.md, and DECISIONS.md.
+Commit and push the verified Phase 2 changes, then re-read STATE.md, TASKS.md, and DECISIONS.md before starting Phase 3.

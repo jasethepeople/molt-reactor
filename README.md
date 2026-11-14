@@ -56,7 +56,7 @@ The DSL supports `payload_eq`, integer-only `payload_cmp`, `state_eq`, `and`, `o
 
 - `cargo run -- register --reactor FILE`: validate and register in memory (no persistent registry).
 - `cargo run -- run --reactor FILE --range RANGE.json --identity IDENTITY.json`: run on a JSON `VerifiedRange` and print generated events, state, and gas. Identity JSON is `{ "actor": "...", "seed_hex": "<64 hex chars>" }`; do not commit a private seed.
-- `cargo run -- verify --reactor FILE --range OUTPUT_INCLUSIVE_RANGE.json --identity IDENTITY.json`: replay an output-inclusive range and report missing outputs. Use the same signer identity as the original run.
+- `cargo run -- verify --reactor FILE --range OUTPUT_INCLUSIVE_RANGE.json --identity IDENTITY.json`: call `Engine::verify` on an output-inclusive range. It rejects missing outputs without committing anything and requires the original signer identity.
 - `cargo run -- analyze --reactor FILE`: validate and print the deterministic analysis result.
 - `cargo run -- demo`: run the complete escrow example.
 
@@ -64,7 +64,7 @@ Ranges must already have passed the upstream MOLT verification layers. This crat
 
 ## What the trap tests prove
 
-The 39 integration tests include all four requested traps:
+The 58 integration tests include all four requested traps:
 
 1. `analyze_rejects_nondeterministic_reactor` rejects HashMap-derived emission order, float values/arithmetic, and `SystemTime::now()` before execution.
 2. `replay_same_range_twice_emits_zero_second_time` proves same-engine idempotency; `replay_complete_output_inclusive_range_reconstructs_state` proves restart replay when prior outputs are in the range.
@@ -72,3 +72,7 @@ The 39 integration tests include all four requested traps:
 4. `gas_budget_enforced_precommit` and `self_trigger_cycle_aborted` prove gas and depth bounds; `conflicting_reactors_aborted_together` proves competing field claims abort together.
 
 Output events retain the standard MOLT event structure. A reserved `_molt_reactor` payload member carries firing identity so a fresh engine can reconstruct the already-fired set from the complete output-inclusive ledger. An input-only range has no evidence of outputs committed elsewhere; see the exact idempotency boundary in `SPEC.md`.
+
+`canonical_json` exposes the pinned MOLT payload serializer; `parse_verified_range` enforces the array-form head, strict range shape, and i64 payload-number bound. See `SPEC.md` Version 1.1 for byte-level canonical JSON, stable error codes, and replay semantics.
+
+Dedicated to Aaron Swartz and to a best friend lost in 2025.

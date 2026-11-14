@@ -74,7 +74,7 @@ A reactor definition is strict JSON: unknown fields are rejected, and no arbitra
 }
 ```
 
-Required fields are `name`, `version` (positive integer), `gas_budget` (positive integer), `trigger.event_type`, `state_key` (one or more JSON Pointers), and `rules`. `max_trigger_depth` defaults to 8 and must be positive when specified. Reactor JSON is limited to 1 MiB; condition and expression nesting is limited to 64 levels.
+Required fields are `name`, `version` (positive integer), `gas_budget` (positive integer), `trigger.event_type`, `state_key` (one or more JSON Pointers), and `rules`. `max_trigger_depth` defaults to 8 and must be in `1..=254` when specified; 255 is reserved so the `u8` chain-depth counter can never saturate and silently stop increasing. Reactor JSON is limited to 1 MiB; condition and expression nesting is limited to 64 levels.
 
 ### Conditions
 
@@ -134,7 +134,7 @@ The initial range events have chain depth zero. Every generated output is queued
 
 ## 5. Conflict detection
 
-Each emission may declare `claims`, an array of state fields it intends to mutate. `claims` does not write state. State mutation occurs only via input payload merging (§3). `claims` exists solely to abort conflicting runs before commit. For every output, the engine pairs each claim with that invocation's canonical `state_key` value. After evaluating and validating the full run, but before commit, it checks claims in deterministic output order. If two different reactor names claim the same `(state_key, field)`, the complete run returns `ConflictError`; neither invocation's events nor state are committed. A reactor may claim the same field multiple times itself. Definitions that omit `claims` make no explicit state-field claims and therefore cannot conflict through this mechanism.
+Each emission may declare `claims`, an array of state fields it intends to mutate. `claims` does not write state; it exists solely to abort conflicting runs before commit. State mutation normally comes from input payload merging (§2 State), with only the scoped `escrow_action`/`deliver` compatibility exception described there. For every output, the engine pairs each claim with that invocation's canonical `state_key` value. After evaluating and validating the full run, but before commit, it checks claims in deterministic output order. If two different reactor names claim the same `(state_key, field)`, the complete run returns `ConflictError`; neither invocation's events nor state are committed. A reactor may claim the same field multiple times itself. Definitions that omit `claims` make no explicit state-field claims and therefore cannot conflict through this mechanism.
 
 ## 6. Atomicity, validation, and signing
 
@@ -173,6 +173,6 @@ This guarantee has a necessary boundary: an input-only range contains no evidenc
 
 - `molt-reactor register --reactor FILE`: validate and register in a short-lived in-memory engine; it does not persist a registry.
 - `molt-reactor run --reactor FILE --range RANGE.json --identity IDENTITY.json`: execute and print the run report. Identity JSON is `{ "actor": "...", "seed_hex": "<64 hex chars>" }`; the seed must remain secret.
-- `molt-reactor verify --reactor FILE --range OUTPUT_INCLUSIVE_RANGE.json --identity IDENTITY.json`: replay and report missing outputs. It needs the same signer identity to recognize trusted replay markers.
+- `molt-reactor verify --reactor FILE --range OUTPUT_INCLUSIVE_RANGE.json --identity IDENTITY.json`: call `Engine::verify` on the complete output-inclusive range. It reconstructs state from a clean replay, rejects missing or mismatched outputs, restores prior engine state on failure, and requires the same signer identity.
 - `molt-reactor analyze --reactor FILE`: statically validate a definition and print `deterministic: yes`, or exit nonzero with a rejection reason.
 - `molt-reactor demo`: run the escrow walkthrough, replay it, analyze the definition, and demonstrate schema rejection of a tampered amount.

@@ -1,6 +1,6 @@
 use ed25519_dalek::{Signer as DalekSigner, SigningKey};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Number, Value};
+use serde_json::{value::RawValue, Map, Number, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -15,6 +15,7 @@ pub struct MoltEvent {
     pub ts: u64,
     #[serde(rename = "type")]
     pub r#type: String,
+    #[serde(deserialize_with = "deserialize_payload")]
     pub payload: Value,
     pub actor: String,
     pub prev_hash: String,
@@ -24,17 +25,56 @@ pub struct MoltEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VerifiedRange {
     pub events: Vec<MoltEvent>,
     pub head: (u64, String),
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawVerifiedRange {
+    events: Vec<RawMoltEvent>,
+    head: (u64, String),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMoltEvent {
+    seq: u64,
+    ts: u64,
+    #[serde(rename = "type")]
+    r#type: String,
+    payload: Box<RawValue>,
+    actor: String,
+    prev_hash: String,
+    pub_key: String,
+    sig: String,
+    hash: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReactorError(pub String);
+pub struct ReactorError {
+    code: &'static str,
+    message: String,
+}
+
+impl ReactorError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+}
 
 impl fmt::Display for ReactorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.message)
     }
 }
 
@@ -42,14 +82,35 @@ impl std::error::Error for ReactorError {}
 
 pub type ReactorResult<T> = Result<T, ReactorError>;
 
+fn deserialize_payload<'de, D>(deserializer: D) -> Result<Value, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut value = Value::deserialize(deserializer)?;
+    reject_float_values(&value).map_err(serde::de::Error::custom)?;
+    reject_out_of_i64(&value).map_err(serde::de::Error::custom)?;
+    normalize_negative_zero(&mut value);
+    Ok(value)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EngineError {
+    Parse(String),
     InvalidDefinition(String),
     Nondeterministic(String),
     InvalidRange(String),
-    Schema(String),
-    Policy(String),
+    Schema {
+        event_index: usize,
+        reason: String,
+    },
+    Policy {
+        event_index: usize,
+        reason: String,
+    },
     MissingSigner,
+    Signature {
+        event_index: usize,
+    },
     GasExceeded {
         reactor: String,
         used: u64,
@@ -57,9 +118,12 @@ pub enum EngineError {
     },
     TriggerDepth {
         reactor: String,
+        depth: u8,
         limit: u8,
     },
     ConflictError {
+        reactor_a: String,
+        reactor_b: String,
         state_key: String,
         field: String,
     },
@@ -68,39 +132,66 @@ pub enum EngineError {
         hash: String,
     },
     ReplayMismatch(String),
+    MarkerInvalid {
+        event_index: usize,
+        reason: String,
+    },
+    StateKey {
+        reactor: String,
+        pointer: String,
+    },
     Evaluation(String),
-    ArithmeticOverflow,
+    ArithmeticOverflow {
+        op: String,
+        left: String,
+        right: String,
+    },
+}
+
+impl EngineError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Parse(_) => "E_PARSE",
+            Self::InvalidDefinition(_) | Self::Nondeterministic(_) | Self::Evaluation(_) => {
+                "E_ANALYZE"
+            }
+            Self::InvalidRange(_) => "E_RANGE_SHAPE",
+            Self::Schema { .. } => "E_SCHEMA",
+            Self::Policy { .. } => "E_POLICY",
+            Self::MissingSigner => "E_SIGNER_MISSING",
+            Self::Signature { .. } => "E_SIG",
+            Self::GasExceeded { .. } => "E_GAS",
+            Self::TriggerDepth { .. } => "E_DEPTH",
+            Self::ConflictError { .. } => "E_CONFLICT",
+            Self::DuplicateEvent { .. } => "E_DUP",
+            Self::ReplayMismatch(_) => "E_REPLAY_MISMATCH",
+            Self::MarkerInvalid { .. } => "E_MARKER_INVALID",
+            Self::StateKey { .. } => "E_STATE_KEY",
+            Self::ArithmeticOverflow { .. } => "E_OVERFLOW",
+        }
+    }
 }
 
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Parse(message) => write!(f, "parse error: {message}"),
             Self::InvalidDefinition(message) => write!(f, "invalid reactor: {message}"),
             Self::Nondeterministic(message) => write!(f, "nondeterministic reactor: {message}"),
             Self::InvalidRange(message) => write!(f, "invalid verified range: {message}"),
-            Self::Schema(message) => write!(f, "schema validation failed: {message}"),
-            Self::Policy(message) => write!(f, "policy validation failed: {message}"),
-            Self::MissingSigner => {
-                f.write_str("reactor emitted events but no signer is configured")
-            }
-            Self::GasExceeded {
-                reactor,
-                used,
-                budget,
-            } => write!(f, "gas budget exceeded for {reactor}: {used}/{budget}"),
-            Self::TriggerDepth { reactor, limit } => {
-                write!(f, "trigger depth exceeded for {reactor} (max {limit})")
-            }
-            Self::ConflictError { state_key, field } => write!(
-                f,
-                "conflicting reactor claims for state key {state_key}, field {field}"
-            ),
-            Self::DuplicateEvent { seq, hash } => {
-                write!(f, "duplicate output event ({seq}, {hash})")
-            }
+            Self::Schema { event_index, reason } => write!(f, "schema validation failed at event {event_index}: {reason}"),
+            Self::Policy { event_index, reason } => write!(f, "policy validation failed at event {event_index}: {reason}"),
+            Self::MissingSigner => f.write_str("reactor emitted events but no signer is configured"),
+            Self::Signature { event_index } => write!(f, "Ed25519 signing failed at event {event_index}"),
+            Self::GasExceeded { reactor, used, budget } => write!(f, "gas budget exceeded for {reactor}: {used}/{budget}"),
+            Self::TriggerDepth { reactor, depth, limit } => write!(f, "trigger depth exceeded for {reactor}: depth {depth} exceeds limit {limit}"),
+            Self::ConflictError { reactor_a, reactor_b, state_key, field } => write!(f, "reactors {reactor_a} and {reactor_b} conflict on state key {state_key}, field {field}"),
+            Self::DuplicateEvent { seq, hash } => write!(f, "duplicate output event ({seq}, {hash})"),
             Self::ReplayMismatch(message) => write!(f, "reactor replay mismatch: {message}"),
+            Self::MarkerInvalid { event_index, reason } => write!(f, "invalid replay marker at event {event_index}: {reason}"),
+            Self::StateKey { reactor, pointer } => write!(f, "reactor {reactor} is missing state_key value at {pointer}"),
             Self::Evaluation(message) => write!(f, "reactor evaluation failed: {message}"),
-            Self::ArithmeticOverflow => f.write_str("checked integer arithmetic overflow"),
+            Self::ArithmeticOverflow { op, left, right } => write!(f, "checked arithmetic overflow: {left} {op} {right}"),
         }
     }
 }
@@ -225,17 +316,21 @@ pub struct Analysis {
 
 pub fn analyze_reactor(source: &str) -> ReactorResult<(ReactorDef, Analysis)> {
     if source.len() > MAX_REACTOR_BYTES {
-        return Err(ReactorError(
-            "reactor JSON exceeds the 1 MiB analysis limit".into(),
+        return Err(ReactorError::new(
+            "E_ANALYZE",
+            "reactor JSON exceeds the 1 MiB analysis limit",
         ));
     }
     reject_forbidden_source(source)?;
-    let raw: Value =
-        serde_json::from_str(source).map_err(|e| ReactorError(format!("invalid JSON: {e}")))?;
+    let mut raw: Value = serde_json::from_str(source)
+        .map_err(|e| ReactorError::new("E_PARSE", format!("invalid JSON: {e}")))?;
+    reject_non_integer_number_syntax(source)?;
     reject_float_values(&raw)?;
+    reject_out_of_i64(&raw)?;
+    normalize_negative_zero(&mut raw);
     let def: ReactorDef = serde_json::from_value(raw)
-        .map_err(|e| ReactorError(format!("invalid reactor DSL: {e}")))?;
-    validate_definition(&def).map_err(|e| ReactorError(e.to_string()))?;
+        .map_err(|e| ReactorError::new("E_PARSE", format!("invalid reactor DSL: {e}")))?;
+    validate_definition(&def).map_err(|e| ReactorError::new("E_ANALYZE", e.to_string()))?;
     let analysis = Analysis {
         name: def.name.clone(),
         version: def.version,
@@ -248,6 +343,37 @@ pub fn analyze_reactor(source: &str) -> ReactorResult<(ReactorDef, Analysis)> {
 
 pub fn parse_reactor(source: &str) -> ReactorResult<ReactorDef> {
     analyze_reactor(source).map(|(def, _)| def)
+}
+
+pub fn parse_verified_range(source: &str) -> Result<VerifiedRange, EngineError> {
+    let raw: RawVerifiedRange = serde_json::from_str(source)
+        .map_err(|error| EngineError::Parse(format!("invalid verified range JSON: {error}")))?;
+    let mut events = Vec::with_capacity(raw.events.len());
+    for event in raw.events {
+        let payload_source = event.payload.get();
+        reject_non_integer_number_syntax(payload_source).map_err(map_reactor_error)?;
+        let mut payload: Value = serde_json::from_str(payload_source)
+            .map_err(|error| EngineError::Parse(format!("invalid event payload JSON: {error}")))?;
+        validate_payload_numbers(&payload)?;
+        normalize_negative_zero(&mut payload);
+        events.push(MoltEvent {
+            seq: event.seq,
+            ts: event.ts,
+            r#type: event.r#type,
+            payload,
+            actor: event.actor,
+            prev_hash: event.prev_hash,
+            pub_key: event.pub_key,
+            sig: event.sig,
+            hash: event.hash,
+        });
+    }
+    let range = VerifiedRange {
+        events,
+        head: raw.head,
+    };
+    validate_range_shape(&range)?;
+    Ok(range)
 }
 
 fn reject_forbidden_source(source: &str) -> ReactorResult<()> {
@@ -267,21 +393,110 @@ fn reject_forbidden_source(source: &str) -> ReactorResult<()> {
     ];
     for (needle, reason) in forbidden {
         if lower.contains(needle) {
-            return Err(ReactorError(format!("{reason} (found {needle})")));
+            return Err(ReactorError::new(
+                "E_ANALYZE",
+                format!("{reason} (found {needle})"),
+            ));
         }
     }
     Ok(())
 }
 
+fn reject_non_integer_number_syntax(source: &str) -> ReactorResult<()> {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            index += 1;
+            continue;
+        }
+        if byte == b'-' || byte.is_ascii_digit() {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_digit()
+                    || matches!(bytes[index], b'.' | b'e' | b'E' | b'+' | b'-'))
+            {
+                index += 1;
+            }
+            let token = &source[start..index];
+            if token.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                return Err(ReactorError::new(
+                    "E_ANALYZE",
+                    "floating-point JSON number syntax is forbidden",
+                ));
+            }
+            if token.parse::<i64>().is_err() {
+                return Err(ReactorError::new(
+                    "E_PARSE",
+                    "integer outside i64 range is forbidden",
+                ));
+            }
+            continue;
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn is_negative_zero(number: &Number) -> bool {
+    number
+        .as_f64()
+        .is_some_and(|value| value == 0.0 && value.is_sign_negative())
+}
+
+fn normalize_negative_zero(value: &mut Value) {
+    match value {
+        Value::Number(number) if is_negative_zero(number) => {
+            *value = Value::Number(Number::from(0));
+        }
+        Value::Array(items) => items.iter_mut().for_each(normalize_negative_zero),
+        Value::Object(items) => items.values_mut().for_each(normalize_negative_zero),
+        _ => {}
+    }
+}
+
 fn reject_float_values(value: &Value) -> ReactorResult<()> {
     match value {
-        Value::Number(number) if number.as_i64().is_none() && number.as_u64().is_none() => Err(
-            ReactorError("floating-point JSON numbers are forbidden".into()),
+        Value::Number(number) if number.is_f64() && !is_negative_zero(number) => Err(
+            ReactorError::new("E_ANALYZE", "floating-point JSON numbers are forbidden"),
         ),
         Value::Array(items) => items.iter().try_for_each(reject_float_values),
         Value::Object(items) => items.values().try_for_each(reject_float_values),
         _ => Ok(()),
     }
+}
+
+fn reject_out_of_i64(value: &Value) -> ReactorResult<()> {
+    match value {
+        Value::Number(number) if number.as_i64().is_none() && !is_negative_zero(number) => Err(
+            ReactorError::new("E_PARSE", "integer outside i64 range is forbidden"),
+        ),
+        Value::Array(items) => items.iter().try_for_each(reject_out_of_i64),
+        Value::Object(items) => items.values().try_for_each(reject_out_of_i64),
+        _ => Ok(()),
+    }
+}
+
+fn validate_payload_numbers(value: &Value) -> Result<(), EngineError> {
+    reject_float_values(value).map_err(|error| EngineError::Nondeterministic(error.to_string()))?;
+    reject_out_of_i64(value).map_err(|error| EngineError::Parse(error.to_string()))?;
+    Ok(())
 }
 
 fn validate_definition(def: &ReactorDef) -> Result<(), EngineError> {
@@ -300,9 +515,14 @@ fn validate_definition(def: &ReactorDef) -> Result<(), EngineError> {
             "gas_budget must be greater than zero".into(),
         ));
     }
-    if def.max_trigger_depth == 0 {
+    if def.gas_budget > i64::MAX as u64 {
+        return Err(EngineError::Parse(
+            "gas_budget exceeds the supported i64 range".into(),
+        ));
+    }
+    if def.max_trigger_depth == 0 || def.max_trigger_depth == u8::MAX {
         return Err(EngineError::InvalidDefinition(
-            "max_trigger_depth must be at least 1".into(),
+            "max_trigger_depth must be in 1..=254".into(),
         ));
     }
     if def.trigger.event_type.is_empty() {
@@ -376,8 +596,7 @@ fn validate_condition(condition: &Condition, depth: usize) -> Result<(), EngineE
                     "invalid condition JSON Pointer: {path}"
                 )));
             }
-            reject_float_values(value)
-                .map_err(|error| EngineError::Nondeterministic(error.to_string()))?;
+            validate_payload_numbers(value)?;
         }
         Condition::PayloadCmp { path, .. } => {
             if !valid_pointer(path) {
@@ -431,6 +650,11 @@ fn validate_expr(expr: &ValueExpr, depth: usize) -> Result<(), EngineError> {
             }
         }
         ValueExpr::Object(items) => {
+            if items.contains_key("_molt_reactor") {
+                return Err(EngineError::InvalidDefinition(
+                    "payload cannot define reserved _molt_reactor metadata".into(),
+                ));
+            }
             for child in items.values() {
                 validate_expr(child, depth + 1)?;
             }
@@ -440,9 +664,7 @@ fn validate_expr(expr: &ValueExpr, depth: usize) -> Result<(), EngineError> {
                 validate_expr(child, depth + 1)?;
             }
         }
-        ValueExpr::Literal(value) => {
-            reject_float_values(value).map_err(|e| EngineError::Nondeterministic(e.to_string()))?
-        }
+        ValueExpr::Literal(value) => validate_payload_numbers(value)?,
     }
     Ok(())
 }
@@ -500,11 +722,12 @@ impl EventSigner {
         seq: u64,
         ts: u64,
         event_type: impl Into<String>,
-        payload: Value,
+        mut payload: Value,
         prev_hash: impl Into<String>,
     ) -> ReactorResult<MoltEvent> {
         let event_type = event_type.into();
         let prev_hash = prev_hash.into();
+        normalize_negative_zero(&mut payload);
         let digest = event_digest(
             seq,
             ts,
@@ -538,8 +761,7 @@ pub fn event_digest(
     prev_hash: &str,
     pub_key: &str,
 ) -> ReactorResult<[u8; 32]> {
-    let payload_bytes = serde_json::to_string(payload)
-        .map_err(|e| ReactorError(format!("cannot serialize payload: {e}")))?;
+    let payload_bytes = canonical_json(payload)?;
     let mut hasher = Sha256::new();
     hasher.update(seq.to_be_bytes());
     hasher.update(ts.to_be_bytes());
@@ -554,6 +776,75 @@ pub fn event_digest(
     Ok(result)
 }
 
+pub fn canonical_json(value: &Value) -> ReactorResult<String> {
+    let mut output = String::new();
+    write_canonical(value, &mut output)?;
+    Ok(output)
+}
+
+fn write_canonical(value: &Value, output: &mut String) -> ReactorResult<()> {
+    match value {
+        Value::Null => output.push_str("null"),
+        Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+        Value::Number(number) => {
+            if is_negative_zero(number) {
+                output.push('0');
+            } else {
+                let integer = number.as_i64().ok_or_else(|| {
+                    if number.is_f64() {
+                        ReactorError::new("E_ANALYZE", "floating-point JSON numbers are forbidden")
+                    } else {
+                        ReactorError::new("E_PARSE", "integer outside i64 range is forbidden")
+                    }
+                })?;
+                output.push_str(&integer.to_string());
+            }
+        }
+        Value::String(value) => write_canonical_string(value, output),
+        Value::Array(items) => {
+            output.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                write_canonical(item, output)?;
+            }
+            output.push(']');
+        }
+        Value::Object(items) => {
+            output.push('{');
+            let mut entries: Vec<_> = items.iter().collect();
+            entries.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
+            for (index, (key, item)) in entries.into_iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                write_canonical_string(key, output);
+                output.push(':');
+                write_canonical(item, output)?;
+            }
+            output.push('}');
+        }
+    }
+    Ok(())
+}
+
+fn write_canonical_string(value: &str, output: &mut String) {
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            character if (character as u32) <= 0x1f => {
+                use std::fmt::Write as _;
+                let _ = write!(output, "\\u{:04x}", character as u32);
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunReport {
     pub new_events: Vec<MoltEvent>,
@@ -564,6 +855,7 @@ pub struct RunReport {
 struct WorkItem {
     event: MoltEvent,
     depth: u8,
+    event_index: usize,
 }
 struct StagedOutput {
     event: MoltEvent,
@@ -620,8 +912,13 @@ impl Engine {
         snapshot_state(&self.state)
     }
 
+    pub fn snapshot_state(&self) -> Value {
+        self.state_snapshot()
+    }
+
     pub fn state_for(&self, reactor: &str, key_values: &[Value]) -> Option<&Value> {
-        let id = serde_json::to_string(key_values).ok()?;
+        let key = Value::Array(key_values.to_vec());
+        let id = canonical_json(&key).ok()?;
         self.state.get(&(reactor.to_owned(), id))
     }
 
@@ -651,20 +948,30 @@ impl Engine {
             .iter()
             .map(|event| (event.hash.clone(), event.seq))
             .collect();
-        let mut recorded_outputs = BTreeMap::<String, MoltEvent>::new();
-        for event in &range.events {
-            if let Some(id) = recorded_firing_id(
+        let mut recorded_outputs = BTreeMap::<String, (MoltEvent, usize)>::new();
+        for (event_index, event) in range.events.iter().enumerate() {
+            let Some(id) = recorded_firing_id(
                 event,
                 &self.reactors,
                 self.signer.as_ref(),
                 &source_types,
                 &source_sequences,
-            ) {
-                if recorded_outputs.insert(id, event.clone()).is_some() {
-                    return Err(EngineError::ReplayMismatch(
-                        "more than one recorded output claims the same rule firing".into(),
-                    ));
-                }
+            )
+            .map_err(|reason| EngineError::MarkerInvalid {
+                event_index,
+                reason,
+            })?
+            else {
+                continue;
+            };
+            if recorded_outputs
+                .insert(id, (event.clone(), event_index))
+                .is_some()
+            {
+                return Err(EngineError::MarkerInvalid {
+                    event_index,
+                    reason: "more than one recorded output claims the same rule firing".into(),
+                });
             }
         }
         let mut consumed_recorded = BTreeSet::new();
@@ -672,7 +979,12 @@ impl Engine {
             .events
             .iter()
             .cloned()
-            .map(|event| WorkItem { event, depth: 0 })
+            .enumerate()
+            .map(|(event_index, event)| WorkItem {
+                event,
+                depth: 0,
+                event_index,
+            })
             .collect();
         let mut staged = Vec::new();
         let mut gas_used = BTreeMap::<String, u64>::new();
@@ -684,9 +996,9 @@ impl Engine {
             seen.insert((event.seq, event.hash.clone()));
         }
 
-        while let Some(item) = queue.pop_front() {
-            reject_float_values(&item.event.payload)
-                .map_err(|e| EngineError::Nondeterministic(e.to_string()))?;
+        while let Some(mut item) = queue.pop_front() {
+            normalize_negative_zero(&mut item.event.payload);
+            validate_payload_numbers(&item.event.payload)?;
             let matching: Vec<ReactorDef> = self
                 .reactors
                 .values()
@@ -698,19 +1010,25 @@ impl Engine {
                 if item.depth > reactor.max_trigger_depth {
                     return Err(EngineError::TriggerDepth {
                         reactor: reactor.name,
+                        depth: item.depth,
                         limit: reactor.max_trigger_depth,
                     });
                 }
                 self.schema
                     .check(&item.event.r#type, &item.event.payload)
-                    .map_err(EngineError::Schema)?;
+                    .map_err(|reason| EngineError::Schema {
+                        event_index: item.event_index,
+                        reason,
+                    })?;
                 let key_id = state_key_id(&reactor, &item.event)?;
                 let state_slot = (reactor.name.clone(), key_id.clone());
                 let current = working_state
                     .entry(state_slot.clone())
                     .or_insert_with(|| Value::Object(Map::new()));
                 merge_input_state(current, &item.event.payload);
-                if item.event.payload.get("action").and_then(Value::as_str) == Some("deliver") {
+                if reactor.trigger.event_type == "escrow_action"
+                    && item.event.payload.get("action").and_then(Value::as_str) == Some("deliver")
+                {
                     if let Value::Object(map) = current {
                         map.insert("delivered".into(), Value::Bool(true));
                     }
@@ -720,10 +1038,9 @@ impl Engine {
                         continue;
                     }
                     let fire_id = fire_id(&reactor, &item.event.hash, rule_index);
-                    if let Some(recorded) = recorded_outputs.get(&fire_id) {
+                    if let Some((recorded, recorded_index)) = recorded_outputs.get(&fire_id) {
                         let expected = eval_expr(&rule.emit.payload, &item.event, current)?;
-                        reject_float_values(&expected)
-                            .map_err(|e| EngineError::Nondeterministic(e.to_string()))?;
+                        validate_payload_numbers(&expected)?;
                         let expected =
                             attach_metadata(expected, &reactor, &item.event.hash, rule_index)?;
                         let signer = self.signer.as_ref().ok_or(EngineError::MissingSigner)?;
@@ -740,10 +1057,16 @@ impl Engine {
                         }
                         self.schema
                             .check(&recorded.r#type, &recorded.payload)
-                            .map_err(EngineError::Schema)?;
+                            .map_err(|reason| EngineError::Schema {
+                                event_index: *recorded_index,
+                                reason,
+                            })?;
                         self.policy
                             .check(&recorded.r#type, &recorded.payload)
-                            .map_err(EngineError::Policy)?;
+                            .map_err(|reason| EngineError::Policy {
+                                event_index: *recorded_index,
+                                reason,
+                            })?;
                         consumed_recorded.insert(fire_id.clone());
                         working_fired.insert(fire_id);
                         continue;
@@ -752,18 +1075,16 @@ impl Engine {
                         continue;
                     }
                     let payload = eval_expr(&rule.emit.payload, &item.event, current)?;
-                    reject_float_values(&payload)
-                        .map_err(|e| EngineError::Nondeterministic(e.to_string()))?;
-                    let payload_bytes = serde_json::to_string(&payload)
-                        .map_err(|e| EngineError::Evaluation(e.to_string()))?
-                        .len() as u64;
+                    validate_payload_numbers(&payload)?;
+                    let payload_bytes =
+                        canonical_json(&payload).map_err(map_reactor_error)?.len() as u64;
                     let cost = payload_bytes
                         .checked_add(1)
-                        .ok_or(EngineError::ArithmeticOverflow)?;
+                        .ok_or_else(|| arithmetic_overflow("+", payload_bytes, 1))?;
                     let used = gas_used.entry(reactor.name.clone()).or_insert(0);
                     *used = used
                         .checked_add(cost)
-                        .ok_or(EngineError::ArithmeticOverflow)?;
+                        .ok_or_else(|| arithmetic_overflow("+", *used, cost))?;
                     if *used > reactor.gas_budget {
                         return Err(EngineError::GasExceeded {
                             reactor: reactor.name.clone(),
@@ -773,12 +1094,20 @@ impl Engine {
                     }
                     let output_payload =
                         attach_metadata(payload, &reactor, &item.event.hash, rule_index)?;
+                    validate_payload_numbers(&output_payload)?;
+                    let output_index = range.events.len() + staged.len();
                     self.schema
                         .check(&rule.emit.event_type, &output_payload)
-                        .map_err(EngineError::Schema)?;
+                        .map_err(|reason| EngineError::Schema {
+                            event_index: output_index,
+                            reason,
+                        })?;
                     self.policy
                         .check(&rule.emit.event_type, &output_payload)
-                        .map_err(EngineError::Policy)?;
+                        .map_err(|reason| EngineError::Policy {
+                            event_index: output_index,
+                            reason,
+                        })?;
                     let signer = self.signer.as_ref().ok_or(EngineError::MissingSigner)?;
                     let head = working_head
                         .as_ref()
@@ -792,7 +1121,7 @@ impl Engine {
                             output_payload,
                             head.1.clone(),
                         )
-                        .map_err(|e| EngineError::Evaluation(e.to_string()))?;
+                        .map_err(map_reactor_error)?;
                     if !seen.insert((event.seq, event.hash.clone())) {
                         return Err(EngineError::DuplicateEvent {
                             seq: event.seq,
@@ -811,14 +1140,15 @@ impl Engine {
                         reactor: reactor.name.clone(),
                         claims,
                     });
-                    children.push(event);
+                    children.push((event, output_index));
                     working_fired.insert(fire_id);
                 }
             }
-            for event in children.into_iter().rev() {
+            for (event, event_index) in children.into_iter().rev() {
                 queue.push_front(WorkItem {
                     event,
                     depth: item.depth.saturating_add(1),
+                    event_index,
                 });
             }
         }
@@ -839,6 +1169,8 @@ impl Engine {
                 if let Some(previous) = claimed.get(&claim_key) {
                     if previous != &output.reactor {
                         return Err(EngineError::ConflictError {
+                            reactor_a: previous.clone(),
+                            reactor_b: output.reactor.clone(),
                             state_key: key.clone(),
                             field: field.clone(),
                         });
@@ -860,24 +1192,89 @@ impl Engine {
             state: snapshot_state(&self.state),
         })
     }
+
+    pub fn verify(&mut self, range: &VerifiedRange) -> Result<(), EngineError> {
+        let previous_state = std::mem::take(&mut self.state);
+        let previous_fired = std::mem::take(&mut self.fired);
+        let previous_head = self.head.take();
+        let previous_events = std::mem::take(&mut self.committed_events);
+        let result = self.run(range);
+        match result {
+            Ok(report) if report.new_events.is_empty() => {
+                self.committed_events = previous_events;
+                Ok(())
+            }
+            Ok(report) => {
+                self.state = previous_state;
+                self.fired = previous_fired;
+                self.head = previous_head;
+                self.committed_events = previous_events;
+                Err(EngineError::ReplayMismatch(format!(
+                    "range is missing {} recorded reactor output(s)",
+                    report.new_events.len()
+                )))
+            }
+            Err(error) => {
+                self.state = previous_state;
+                self.fired = previous_fired;
+                self.head = previous_head;
+                self.committed_events = previous_events;
+                Err(error)
+            }
+        }
+    }
+}
+
+fn map_reactor_error(error: ReactorError) -> EngineError {
+    match error.code() {
+        "E_PARSE" => EngineError::Parse(error.to_string()),
+        "E_ANALYZE" => EngineError::Nondeterministic(error.to_string()),
+        _ => EngineError::Evaluation(error.to_string()),
+    }
+}
+
+fn arithmetic_overflow(op: &str, left: impl ToString, right: impl ToString) -> EngineError {
+    EngineError::ArithmeticOverflow {
+        op: op.to_owned(),
+        left: left.to_string(),
+        right: right.to_string(),
+    }
+}
+
+fn is_lower_hex_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn validate_range_shape(range: &VerifiedRange) -> Result<(), EngineError> {
     if range.events.is_empty() {
-        if range.head.1 != GENESIS_HASH {
+        if range.head != (0, GENESIS_HASH.to_owned()) {
             return Err(EngineError::InvalidRange(
-                "an empty range must use GENESIS_HASH as its head".into(),
+                "an empty range must use sequence 0 and GENESIS_HASH".into(),
             ));
         }
         return Ok(());
     }
+    for event in &range.events {
+        if !is_lower_hex_hash(&event.hash) {
+            return Err(EngineError::InvalidRange(
+                "event hash must be 64 lowercase hexadecimal characters".into(),
+            ));
+        }
+    }
     for pair in range.events.windows(2) {
-        if pair[1].seq
-            != pair[0]
+        let expected =
+            pair[0]
                 .seq
                 .checked_add(1)
-                .ok_or(EngineError::ArithmeticOverflow)?
-        {
+                .ok_or_else(|| EngineError::ArithmeticOverflow {
+                    op: "+".into(),
+                    left: pair[0].seq.to_string(),
+                    right: "1".into(),
+                })?;
+        if pair[1].seq != expected {
             return Err(EngineError::InvalidRange(
                 "event sequence numbers are not contiguous".into(),
             ));
@@ -887,7 +1284,7 @@ fn validate_range_shape(range: &VerifiedRange) -> Result<(), EngineError> {
         .events
         .last()
         .ok_or_else(|| EngineError::InvalidRange("missing last event".into()))?;
-    if range.head != (last.seq, last.hash.clone()) {
+    if range.head != (last.seq, last.hash.clone()) || !is_lower_hex_hash(&range.head.1) {
         return Err(EngineError::InvalidRange(
             "head does not match the last event".into(),
         ));
@@ -899,7 +1296,9 @@ fn next_sequence(head: &(u64, String)) -> Result<u64, EngineError> {
     if head.1 == GENESIS_HASH {
         Ok(0)
     } else {
-        head.0.checked_add(1).ok_or(EngineError::ArithmeticOverflow)
+        head.0
+            .checked_add(1)
+            .ok_or_else(|| arithmetic_overflow("+", head.0, 1))
     }
 }
 
@@ -909,10 +1308,19 @@ fn state_key_id(reactor: &ReactorDef, event: &MoltEvent) -> Result<String, Engin
         let value = event
             .payload
             .pointer(path)
-            .ok_or_else(|| EngineError::Evaluation(format!("missing state_key value at {path}")))?;
+            .ok_or_else(|| EngineError::StateKey {
+                reactor: reactor.name.clone(),
+                pointer: path.clone(),
+            })?;
         parts.push(value.clone());
     }
-    serde_json::to_string(&parts).map_err(|e| EngineError::Evaluation(e.to_string()))
+    canonical_json(&Value::Array(parts)).map_err(|error| {
+        if error.code() == "E_PARSE" {
+            EngineError::Parse(error.to_string())
+        } else {
+            EngineError::Nondeterministic(error.to_string())
+        }
+    })
 }
 
 fn merge_input_state(state: &mut Value, payload: &Value) {
@@ -1034,21 +1442,23 @@ fn binary_integer(
         .ok_or_else(|| {
             EngineError::Evaluation("integer arithmetic requires signed 64-bit operands".into())
         })?;
+    let op = if add { "+" } else { "-" };
     let result = if add {
         left.checked_add(right)
     } else {
         left.checked_sub(right)
     }
-    .ok_or(EngineError::ArithmeticOverflow)?;
+    .ok_or_else(|| arithmetic_overflow(op, left, right))?;
     Ok(Value::Number(Number::from(result)))
 }
 
 fn attach_metadata(
-    payload: Value,
+    mut payload: Value,
     reactor: &ReactorDef,
     trigger_hash: &str,
     rule_index: usize,
 ) -> Result<Value, EngineError> {
+    normalize_negative_zero(&mut payload);
     let metadata = serde_json::json!({
         "name": reactor.name,
         "version": reactor.version,
@@ -1075,33 +1485,70 @@ fn recorded_firing_id(
     signer: Option<&EventSigner>,
     source_types: &BTreeMap<String, String>,
     source_sequences: &BTreeMap<String, u64>,
-) -> Option<String> {
-    let metadata = event.payload.get("_molt_reactor")?;
-    let (Some(name), Some(version), Some(trigger_hash), Some(rule_index)) = (
-        metadata.get("name").and_then(Value::as_str),
-        metadata.get("version").and_then(Value::as_u64),
-        metadata.get("trigger_hash").and_then(Value::as_str),
-        metadata.get("rule_index").and_then(Value::as_u64),
-    ) else {
-        return None;
+) -> Result<Option<String>, String> {
+    let Some(metadata) = event.payload.get("_molt_reactor") else {
+        return Ok(None);
     };
-    let reactor = reactors.get(name)?;
-    let rule_index = usize::try_from(rule_index).ok()?;
-    let rule = reactor.rules.get(rule_index)?;
-    let expected_signer = signer?;
-    if reactor.version as u64 == version
-        && event.r#type == rule.emit.event_type
-        && event.actor == expected_signer.actor()
-        && event.pub_key == expected_signer.public_key()
-        && source_types.get(trigger_hash) == Some(&reactor.trigger.event_type)
-        && source_sequences
+    let Value::Object(fields) = metadata else {
+        return Err("_molt_reactor must be an object".into());
+    };
+    let expected_fields = ["name", "rule_index", "trigger_hash", "version"];
+    if fields.len() != expected_fields.len()
+        || fields
+            .keys()
+            .map(String::as_str)
+            .any(|key| !expected_fields.contains(&key))
+    {
+        return Err(
+            "_molt_reactor must contain exactly name, version, trigger_hash, and rule_index".into(),
+        );
+    }
+    let name = fields
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "marker name must be a string".to_owned())?;
+    let version = fields
+        .get("version")
+        .and_then(Value::as_i64)
+        .filter(|version| *version >= 1)
+        .ok_or_else(|| "marker version must be an integer >= 1".to_owned())?;
+    let trigger_hash = fields
+        .get("trigger_hash")
+        .and_then(Value::as_str)
+        .filter(|hash| is_lower_hex_hash(hash))
+        .ok_or_else(|| "marker trigger_hash must be 64 lowercase hex characters".to_owned())?;
+    let rule_index = fields
+        .get("rule_index")
+        .and_then(Value::as_i64)
+        .filter(|index| *index >= 0)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| "marker rule_index must be an integer >= 0".to_owned())?;
+    let reactor = reactors
+        .get(name)
+        .ok_or_else(|| format!("marker names unregistered reactor {name}"))?;
+    let rule = reactor
+        .rules
+        .get(rule_index)
+        .ok_or_else(|| format!("marker rule_index {rule_index} is out of range"))?;
+    let expected_signer =
+        signer.ok_or_else(|| "replay marker requires a configured signer".to_owned())?;
+    if reactor.version as i64 != version {
+        return Err("marker version does not match registered reactor".into());
+    }
+    if event.r#type != rule.emit.event_type {
+        return Err("marker output type does not match its rule".into());
+    }
+    if event.actor != expected_signer.actor() || event.pub_key != expected_signer.public_key() {
+        return Err("marker output signer does not match configured signer".into());
+    }
+    if source_types.get(trigger_hash) != Some(&reactor.trigger.event_type)
+        || !source_sequences
             .get(trigger_hash)
             .is_some_and(|sequence| *sequence < event.seq)
     {
-        Some(fire_id(reactor, trigger_hash, rule_index))
-    } else {
-        None
+        return Err("marker trigger_hash does not identify an earlier matching input event".into());
     }
+    Ok(Some(fire_id(reactor, trigger_hash, rule_index)))
 }
 
 fn fire_id(reactor: &ReactorDef, trigger_hash: &str, rule_index: usize) -> String {

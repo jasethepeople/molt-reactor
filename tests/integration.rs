@@ -275,6 +275,22 @@ fn state_is_partitioned_by_state_key() {
 }
 
 #[test]
+fn state_merging_is_shallow_at_the_top_level() {
+    let def = definition("shallow", "input", vec![], 100, 2, &["/id"]);
+    let range = input_range(vec![
+        ("input", json!({"id":"a","config":{"left":1,"right":2}})),
+        ("input", json!({"id":"a","config":{"right":3}})),
+    ]);
+    let mut engine = Engine::new(None);
+    engine.register_reactor(def).unwrap();
+    let report = engine.run(&range).unwrap();
+    assert_eq!(
+        report.state["shallow"]["[\"a\"]"]["config"],
+        json!({"right":3})
+    );
+}
+
+#[test]
 fn unmatched_event_emits_nothing() {
     let def = definition(
         "unmatched",
@@ -373,6 +389,195 @@ fn replay_rejects_a_recorded_output_that_differs() {
 }
 
 #[test]
+fn verify_rejects_orphaned_marker() {
+    let def = definition(
+        "orphan-check",
+        "input",
+        vec![rule(eq("/go", json!(true)), "out", json!({"ok":true}))],
+        100,
+        2,
+        &["/id"],
+    );
+    let input = input_range(vec![("input", json!({"id":"a","go":true}))]);
+    let signer = EventSigner::from_seed("r", [32; 32]);
+    let mut producer = Engine::new(Some(EventSigner::from_seed("r", [32; 32])));
+    producer.register_reactor(def.clone()).unwrap();
+    let mut output = producer.run(&input).unwrap().new_events.remove(0);
+    output.payload["_molt_reactor"]["trigger_hash"] = json!("f".repeat(64));
+    let mut events = input.events.clone();
+    events.push(output.clone());
+    let full = VerifiedRange {
+        events,
+        head: (output.seq, output.hash),
+    };
+    let mut verifier = Engine::new(Some(signer));
+    verifier.register_reactor(def).unwrap();
+    let error = verifier.verify(&full).unwrap_err();
+    assert_eq!(error.code(), "E_MARKER_INVALID");
+    assert_eq!(verifier.snapshot_state(), json!({}));
+    assert!(verifier.committed_events().is_empty());
+}
+
+#[test]
+fn verify_missing_outputs_is_atomic() {
+    let def = definition(
+        "verify-missing",
+        "input",
+        vec![rule(eq("/go", json!(true)), "out", json!({"ok":true}))],
+        100,
+        2,
+        &["/id"],
+    );
+    let input = input_range(vec![("input", json!({"id":"a","go":true}))]);
+    let mut verifier = Engine::new(Some(EventSigner::from_seed("r", [33; 32])));
+    verifier.register_reactor(def).unwrap();
+    let error = verifier.verify(&input).unwrap_err();
+    assert_eq!(error.code(), "E_REPLAY_MISMATCH");
+    assert_eq!(verifier.snapshot_state(), json!({}));
+    assert!(verifier.committed_events().is_empty());
+    assert!(verifier.ledger_head().is_none());
+}
+
+#[test]
+fn verify_does_not_trust_in_memory_fired_ids() {
+    let def = definition(
+        "verify-memory",
+        "input",
+        vec![rule(eq("/go", json!(true)), "out", json!({"ok":true}))],
+        100,
+        2,
+        &["/id"],
+    );
+    let input = input_range(vec![("input", json!({"id":"a","go":true}))]);
+    let mut engine = Engine::new(Some(EventSigner::from_seed("r", [35; 32])));
+    engine.register_reactor(def).unwrap();
+    engine.run(&input).unwrap();
+    let old_state = engine.snapshot_state();
+    let old_events = engine.committed_events().to_vec();
+    let error = engine.verify(&input).unwrap_err();
+    assert_eq!(error.code(), "E_REPLAY_MISMATCH");
+    assert_eq!(engine.snapshot_state(), old_state);
+    assert_eq!(engine.committed_events(), old_events.as_slice());
+}
+
+#[test]
+fn verify_accepts_complete_output_inclusive_range() {
+    let def = definition(
+        "verify-complete",
+        "input",
+        vec![rule(eq("/go", json!(true)), "out", json!({"ok":true}))],
+        100,
+        2,
+        &["/id"],
+    );
+    let input = input_range(vec![("input", json!({"id":"a","go":true}))]);
+    let signer = EventSigner::from_seed("r", [34; 32]);
+    let mut producer = Engine::new(Some(EventSigner::from_seed("r", [34; 32])));
+    producer.register_reactor(def.clone()).unwrap();
+    let output = producer.run(&input).unwrap().new_events;
+    let mut events = input.events.clone();
+    events.extend(output);
+    let head = events
+        .last()
+        .map(|event| (event.seq, event.hash.clone()))
+        .unwrap();
+    let full = VerifiedRange { events, head };
+    let mut verifier = Engine::new(Some(signer));
+    verifier.register_reactor(def).unwrap();
+    verifier.verify(&full).unwrap();
+    assert_eq!(verifier.committed_events().len(), 0);
+    assert_eq!(
+        verifier.snapshot_state()["verify-complete"]["[\"a\"]"]["go"],
+        true
+    );
+}
+
+#[test]
+fn engine_error_codes_are_stable_for_every_variant() {
+    let errors = [
+        (EngineError::Parse("x".into()), "E_PARSE"),
+        (EngineError::InvalidDefinition("x".into()), "E_ANALYZE"),
+        (EngineError::Nondeterministic("x".into()), "E_ANALYZE"),
+        (EngineError::InvalidRange("x".into()), "E_RANGE_SHAPE"),
+        (
+            EngineError::Schema {
+                event_index: 0,
+                reason: "x".into(),
+            },
+            "E_SCHEMA",
+        ),
+        (
+            EngineError::Policy {
+                event_index: 0,
+                reason: "x".into(),
+            },
+            "E_POLICY",
+        ),
+        (EngineError::MissingSigner, "E_SIGNER_MISSING"),
+        (EngineError::Signature { event_index: 0 }, "E_SIG"),
+        (
+            EngineError::GasExceeded {
+                reactor: "r".into(),
+                used: 2,
+                budget: 1,
+            },
+            "E_GAS",
+        ),
+        (
+            EngineError::TriggerDepth {
+                reactor: "r".into(),
+                depth: 2,
+                limit: 1,
+            },
+            "E_DEPTH",
+        ),
+        (
+            EngineError::ConflictError {
+                reactor_a: "a".into(),
+                reactor_b: "b".into(),
+                state_key: "[]".into(),
+                field: "x".into(),
+            },
+            "E_CONFLICT",
+        ),
+        (
+            EngineError::DuplicateEvent {
+                seq: 1,
+                hash: "a".repeat(64),
+            },
+            "E_DUP",
+        ),
+        (EngineError::ReplayMismatch("x".into()), "E_REPLAY_MISMATCH"),
+        (
+            EngineError::MarkerInvalid {
+                event_index: 0,
+                reason: "x".into(),
+            },
+            "E_MARKER_INVALID",
+        ),
+        (
+            EngineError::StateKey {
+                reactor: "r".into(),
+                pointer: "/id".into(),
+            },
+            "E_STATE_KEY",
+        ),
+        (EngineError::Evaluation("x".into()), "E_ANALYZE"),
+        (
+            EngineError::ArithmeticOverflow {
+                op: "+".into(),
+                left: "1".into(),
+                right: "2".into(),
+            },
+            "E_OVERFLOW",
+        ),
+    ];
+    for (error, expected) in errors {
+        assert_eq!(error.code(), expected);
+    }
+}
+
+#[test]
 fn unrelated_event_cannot_forge_replay_marker() {
     let def = definition(
         "marker-check",
@@ -398,9 +603,11 @@ fn unrelated_event_cannot_forge_replay_marker() {
     range.head = (unrelated.seq, unrelated.hash);
     let mut engine = Engine::new(Some(signer));
     engine.register_reactor(def).unwrap();
-    let report = engine.run(&range).unwrap();
-    assert_eq!(report.new_events.len(), 1);
-    assert_eq!(report.new_events[0].r#type, "out");
+    assert!(matches!(
+        engine.run(&range),
+        Err(EngineError::MarkerInvalid { .. })
+    ));
+    assert_eq!(engine.state_snapshot(), json!({}));
 }
 
 struct RejectThird;
@@ -433,6 +640,7 @@ fn atomic_batch_rolls_back_on_invalid_third_event() {
     engine.register_reactor(def).unwrap();
     let error = engine.run(&range).unwrap_err();
     assert!(error.to_string().contains("third event schema rejected"));
+    assert!(matches!(error, EngineError::Schema { event_index: 3, .. }));
     assert_eq!(engine.state_snapshot(), json!({}));
     assert!(engine.committed_events().is_empty());
     assert!(engine.ledger_head().is_none());
@@ -520,10 +728,18 @@ fn conflicting_reactors_aborted_together() {
     let mut engine = Engine::new(Some(EventSigner::from_seed("r", [11; 32])));
     engine.register_reactor(first).unwrap();
     engine.register_reactor(second).unwrap();
-    assert!(matches!(
-        engine.run(&range),
-        Err(EngineError::ConflictError { .. })
-    ));
+    let error = engine.run(&range).unwrap_err();
+    match error {
+        EngineError::ConflictError {
+            reactor_a,
+            reactor_b,
+            ..
+        } => {
+            assert_eq!(reactor_a, "alpha");
+            assert_eq!(reactor_b, "beta");
+        }
+        other => panic!("expected conflict, got {other}"),
+    }
     assert_eq!(engine.state_snapshot(), json!({}));
     assert!(engine.committed_events().is_empty());
 }
@@ -550,7 +766,21 @@ fn same_reactor_can_claim_same_field_across_rules() {
 #[test]
 fn float_input_is_rejected_even_when_unused() {
     let def = definition("float-input", "input", vec![], 100, 2, &["/id"]);
-    let range = input_range(vec![("input", json!({"id":"a","unused":1.25}))]);
+    let event = molt_reactor::MoltEvent {
+        seq: 0,
+        ts: 1,
+        r#type: "input".into(),
+        payload: json!({"id":"a","unused":1.25}),
+        actor: "upstream".into(),
+        prev_hash: GENESIS_HASH.into(),
+        pub_key: "00".repeat(32),
+        sig: "00".repeat(64),
+        hash: "ab".repeat(32),
+    };
+    let range = VerifiedRange {
+        events: vec![event.clone()],
+        head: (event.seq, event.hash),
+    };
     let mut engine = Engine::new(None);
     engine.register_reactor(def).unwrap();
     assert!(matches!(
@@ -596,6 +826,45 @@ fn outputs_chain_and_increment_sequences_after_range_head() {
     let output = &report.new_events[0];
     assert_eq!(output.seq, 1);
     assert_eq!(output.prev_hash, previous);
+    assert_eq!(output.ts, 10);
+}
+
+#[test]
+fn chained_outputs_keep_trigger_timestamp_and_hash_ancestry() {
+    let first = definition(
+        "a-first",
+        "input",
+        vec![rule(
+            eq("/go", json!(true)),
+            "middle",
+            json!({"id":{"field":"payload:/id"}}),
+        )],
+        100,
+        4,
+        &["/id"],
+    );
+    let second = definition(
+        "b-second",
+        "middle",
+        vec![rule(eq("/id", json!("a")), "final", json!({"done":true}))],
+        100,
+        4,
+        &["/id"],
+    );
+    let input = input_range(vec![("input", json!({"id":"a","go":true}))]);
+    let mut engine = Engine::new(Some(EventSigner::from_seed("reactor-chain", [36; 32])));
+    engine.register_reactor(first).unwrap();
+    engine.register_reactor(second).unwrap();
+    let report = engine.run(&input).unwrap();
+    assert_eq!(report.new_events.len(), 2);
+    let middle = &report.new_events[0];
+    let final_event = &report.new_events[1];
+    assert_eq!(middle.r#type, "middle");
+    assert_eq!(final_event.r#type, "final");
+    assert_eq!((middle.seq, final_event.seq), (1, 2));
+    assert_eq!((middle.ts, final_event.ts), (10, 10));
+    assert_eq!(middle.prev_hash, input.head.1);
+    assert_eq!(final_event.prev_hash, middle.hash);
 }
 
 #[test]
@@ -630,7 +899,7 @@ fn signed_output_hash_and_ed25519_signature_are_valid() {
 #[test]
 fn gas_meter_counts_one_plus_template_payload_bytes() {
     let payload = json!({"x":1});
-    let expected = serde_json::to_string(&payload).unwrap().len() as u64 + 1;
+    let expected = molt_reactor::canonical_json(&payload).unwrap().len() as u64 + 1;
     let def = definition(
         "meter",
         "input",
@@ -665,9 +934,21 @@ fn state_key_must_exist_for_triggered_event() {
     engine.register_reactor(def).unwrap();
     assert!(matches!(
         engine.run(&range),
-        Err(EngineError::Evaluation(_))
+        Err(EngineError::StateKey { .. })
     ));
     assert_eq!(engine.state_snapshot(), json!({}));
+}
+
+#[test]
+fn deliver_only_fires_for_escrow_action() {
+    let def = definition("generic", "other_action", vec![], 100, 2, &["/id"]);
+    let range = input_range(vec![("other_action", json!({"id":"a","action":"deliver"}))]);
+    let mut engine = Engine::new(Some(EventSigner::from_seed("r", [31; 32])));
+    engine.register_reactor(def).unwrap();
+    let report = engine.run(&range).unwrap();
+    let partition = &report.state["generic"]["[\"a\"]"];
+    assert_eq!(partition["action"], "deliver");
+    assert!(partition.get("delivered").is_none());
 }
 
 #[test]
@@ -686,33 +967,25 @@ fn integer_arithmetic_overflow_aborts_atomically() {
     engine.register_reactor(def).unwrap();
     assert!(matches!(
         engine.run(&range),
-        Err(EngineError::ArithmeticOverflow)
+        Err(EngineError::ArithmeticOverflow { .. })
     ));
     assert_eq!(engine.state_snapshot(), json!({}));
 }
 
 #[test]
 fn user_payload_cannot_override_reserved_replay_metadata() {
-    let def = definition(
-        "reserved",
-        "input",
-        vec![rule(
-            eq("/go", json!(true)),
-            "out",
-            json!({"_molt_reactor":{}}),
-        )],
-        100,
-        2,
-        &["/id"],
-    );
-    let range = input_range(vec![("input", json!({"id":"a","go":true}))]);
-    let mut engine = Engine::new(Some(EventSigner::from_seed("r", [14; 32])));
-    engine.register_reactor(def).unwrap();
-    assert!(matches!(
-        engine.run(&range),
-        Err(EngineError::Evaluation(_))
-    ));
-    assert!(engine.committed_events().is_empty());
+    let source = json!({
+        "name":"reserved",
+        "version":1,
+        "gas_budget":100,
+        "trigger":{"event_type":"input"},
+        "state_key":["/id"],
+        "rules":[rule(eq("/go", json!(true)), "out", json!({"_molt_reactor":{}}))]
+    })
+    .to_string();
+    let error = analyze_reactor(&source).unwrap_err();
+    assert_eq!(error.code(), "E_ANALYZE");
+    assert!(error.to_string().contains("reserved _molt_reactor"));
 }
 
 #[test]
@@ -726,6 +999,205 @@ fn event_payload_serialization_is_key_order_stable() {
     assert_eq!(
         event_digest(1, 2, "x", &left, "actor", GENESIS_HASH, "pub").unwrap(),
         event_digest(1, 2, "x", &right, "actor", GENESIS_HASH, "pub").unwrap()
+    );
+}
+
+#[test]
+fn canonical_json_rejects_float_and_out_of_i64_values_with_stable_codes() {
+    let float = molt_reactor::canonical_json(&json!(1.5)).unwrap_err();
+    assert_eq!(float.code(), "E_ANALYZE");
+    let large = json!(i64::MAX as u64 + 1);
+    let outside = molt_reactor::canonical_json(&large).unwrap_err();
+    assert_eq!(outside.code(), "E_PARSE");
+}
+
+#[test]
+fn range_parser_requires_array_head_and_rejects_extra_keys() {
+    let range = input_range(vec![("input", json!({"id":"a"}))]);
+    let json = serde_json::to_string(&range).unwrap();
+    assert!(serde_json::from_str::<Value>(&json).unwrap()["head"].is_array());
+    let with_extra = json.replacen("{\"events\":", "{\"extra\":true,\"events\":", 1);
+    assert_eq!(
+        molt_reactor::parse_verified_range(&with_extra)
+            .unwrap_err()
+            .code(),
+        "E_PARSE"
+    );
+}
+
+#[test]
+fn range_payload_decimal_is_analyze_error_but_envelope_decimal_is_parse_error() {
+    let range = input_range(vec![("input", json!({"id":"a"}))]);
+    let source = serde_json::to_string(&range).unwrap();
+    let decimal_payload = source.replace("\"id\":\"a\"", "\"id\":\"a\",\"unused\":1.25");
+    assert_eq!(
+        molt_reactor::parse_verified_range(&decimal_payload)
+            .unwrap_err()
+            .code(),
+        "E_ANALYZE"
+    );
+    let decimal_sequence = source.replace("\"seq\":0", "\"seq\":0.0");
+    assert_eq!(
+        molt_reactor::parse_verified_range(&decimal_sequence)
+            .unwrap_err()
+            .code(),
+        "E_PARSE"
+    );
+}
+
+#[test]
+fn empty_range_requires_genesis_sequence_and_hash() {
+    let invalid = r#"{"events":[],"head":[1,"0000000000000000000000000000000000000000000000000000000000000000"]}"#;
+    assert_eq!(
+        molt_reactor::parse_verified_range(invalid)
+            .unwrap_err()
+            .code(),
+        "E_RANGE_SHAPE"
+    );
+}
+
+#[test]
+fn envelope_u64_is_allowed_but_payload_integers_are_bounded_to_i64() {
+    let valid = molt_reactor::MoltEvent {
+        seq: u64::MAX,
+        ts: u64::MAX,
+        r#type: "input".into(),
+        payload: json!({"n":i64::MAX}),
+        actor: "upstream".into(),
+        prev_hash: GENESIS_HASH.into(),
+        pub_key: "00".repeat(32),
+        sig: "00".repeat(64),
+        hash: "ab".repeat(32),
+    };
+    let valid_range = VerifiedRange {
+        events: vec![valid.clone()],
+        head: (u64::MAX, valid.hash.clone()),
+    };
+    assert_eq!(
+        molt_reactor::parse_verified_range(&serde_json::to_string(&valid_range).unwrap())
+            .unwrap()
+            .events[0]
+            .seq,
+        u64::MAX
+    );
+    let invalid = molt_reactor::MoltEvent {
+        payload: json!({"n":i64::MAX as u64 + 1}),
+        ..valid.clone()
+    };
+    let invalid_range = VerifiedRange {
+        events: vec![invalid.clone()],
+        head: (u64::MAX, invalid.hash.clone()),
+    };
+    assert_eq!(
+        molt_reactor::parse_verified_range(&serde_json::to_string(&invalid_range).unwrap())
+            .unwrap_err()
+            .code(),
+        "E_PARSE"
+    );
+}
+
+#[test]
+fn reactor_definition_rejects_out_of_i64_integer_with_parse_code() {
+    let source = r#"{"name":"too-large","version":1,"gas_budget":9223372036854775808,"trigger":{"event_type":"x"},"state_key":["/id"],"rules":[]}"#;
+    assert_eq!(analyze_reactor(source).unwrap_err().code(), "E_PARSE");
+}
+
+#[test]
+fn integers_beyond_u64_in_payloads_are_parse_errors() {
+    let hash = "ab".repeat(32);
+    let source = format!(
+        r#"{{"events":[{{"seq":0,"ts":1,"type":"x","payload":{{"n":18446744073709551616}},"actor":"a","prev_hash":"{}","pub_key":"","sig":"","hash":"{}"}}],"head":[0,"{}"]}}"#,
+        GENESIS_HASH, hash, hash
+    );
+    assert_eq!(
+        molt_reactor::parse_verified_range(&source)
+            .unwrap_err()
+            .code(),
+        "E_PARSE"
+    );
+}
+
+#[test]
+fn canonical_json_pins_utf8_order_escaping_and_negative_zero() {
+    let value: Value = serde_json::from_str(r#"{"é":3,"z":2,"a":1}"#).unwrap();
+    assert_eq!(
+        molt_reactor::canonical_json(&value).unwrap(),
+        r#"{"a":1,"z":2,"é":3}"#
+    );
+    let text = Value::String("\"\\\n\t\0é".into());
+    assert_eq!(
+        molt_reactor::canonical_json(&text).unwrap(),
+        r#""\"\\\u000a\u0009\u0000é""#
+    );
+    assert_eq!(
+        molt_reactor::canonical_json(&serde_json::from_str("-0").unwrap()).unwrap(),
+        "0"
+    );
+    assert_eq!(
+        molt_reactor::canonical_json(&json!(1.0))
+            .unwrap_err()
+            .code(),
+        "E_ANALYZE"
+    );
+}
+
+#[test]
+fn decimal_and_exponent_syntax_is_rejected_at_parse_boundaries() {
+    for source in [
+        r#"{"name":"fraction","version":1,"gas_budget":10,"trigger":{"event_type":"x"},"state_key":["/id"],"rules":[{"when":{"op":"payload_eq","path":"/x","value":-0.0},"emit":{"type":"out","payload":{}}}]}"#,
+        r#"{"name":"exponent","version":1,"gas_budget":10,"trigger":{"event_type":"x"},"state_key":["/id"],"rules":[{"when":{"op":"payload_eq","path":"/x","value":1e0},"emit":{"type":"out","payload":{}}}]}"#,
+    ] {
+        assert_eq!(analyze_reactor(source).unwrap_err().code(), "E_ANALYZE");
+    }
+}
+
+#[test]
+fn out_of_i64_numbers_are_rejected_at_parse_boundaries_but_envelopes_stay_u64() {
+    let large = i64::MAX as u64 + 1;
+    let event = molt_reactor::MoltEvent {
+        seq: u64::MAX,
+        ts: u64::MAX,
+        r#type: "input".into(),
+        payload: json!({"n":large}),
+        actor: "upstream".into(),
+        prev_hash: GENESIS_HASH.into(),
+        pub_key: "00".repeat(32),
+        sig: "00".repeat(64),
+        hash: "ab".repeat(32),
+    };
+    let range = VerifiedRange {
+        events: vec![event],
+        head: (u64::MAX, "ab".repeat(32)),
+    };
+    let source = serde_json::to_string(&range).unwrap();
+    assert_eq!(
+        molt_reactor::parse_verified_range(&source)
+            .unwrap_err()
+            .code(),
+        "E_PARSE"
+    );
+    let reactor = r#"{"name":"wide","version":1,"gas_budget":9223372036854775808,"trigger":{"event_type":"x"},"state_key":["/id"],"rules":[]}"#;
+    assert_eq!(analyze_reactor(reactor).unwrap_err().code(), "E_PARSE");
+}
+
+#[test]
+fn verified_range_requires_array_head_and_exact_keys() {
+    let range = input_range(vec![("input", json!({"id":"a"}))]);
+    let source = serde_json::to_string(&range).unwrap();
+    assert!(source.contains("\"head\":["));
+    let extra_key = source.replace("\"head\":", "\"extra\":0,\"head\":");
+    assert_eq!(
+        molt_reactor::parse_verified_range(&extra_key)
+            .unwrap_err()
+            .code(),
+        "E_PARSE"
+    );
+    let empty = r#"{"events":[],"head":[1,"0000000000000000000000000000000000000000000000000000000000000000"]}"#;
+    assert_eq!(
+        molt_reactor::parse_verified_range(empty)
+            .unwrap_err()
+            .code(),
+        "E_RANGE_SHAPE"
     );
 }
 
@@ -818,7 +1290,10 @@ fn policy_rejection_is_atomic() {
         Box::new(RejectPolicy),
     );
     engine.register_reactor(def).unwrap();
-    assert!(matches!(engine.run(&range), Err(EngineError::Policy(_))));
+    assert!(matches!(
+        engine.run(&range),
+        Err(EngineError::Policy { .. })
+    ));
     assert_eq!(engine.state_snapshot(), json!({}));
 }
 

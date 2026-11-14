@@ -1,6 +1,6 @@
 use molt_reactor::{
-    analyze_reactor, Engine, EventSigner, MoltEvent, PermissiveCheck, ReactorDef, SchemaCheck,
-    VerifiedRange, GENESIS_HASH,
+    analyze_reactor, parse_verified_range, Engine, EventSigner, MoltEvent, PermissiveCheck,
+    ReactorDef, SchemaCheck, VerifiedRange, GENESIS_HASH,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -141,13 +141,9 @@ fn run_cli(args: Vec<String>) -> Result<(), String> {
             let signer = load_signer(identity_path)?;
             let mut engine = Engine::new(Some(signer));
             engine.register_reactor(def).map_err(|e| e.to_string())?;
-            let report = engine.run(&range).map_err(|e| e.to_string())?;
-            if !report.new_events.is_empty() {
-                return Err(format!(
-                    "range is missing {} recorded reactor output(s)",
-                    report.new_events.len()
-                ));
-            }
+            engine
+                .verify(&range)
+                .map_err(|e| format!("{}: {e}", e.code()))?;
             println!(
                 "verified: deterministic replay; {} input events; no missing outputs",
                 range.events.len()
@@ -176,7 +172,7 @@ fn load_reactor(path: &str) -> Result<(ReactorDef, molt_reactor::Analysis), Stri
 
 fn load_range(path: &str) -> Result<VerifiedRange, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
-    serde_json::from_str(&source).map_err(|e| format!("invalid range JSON: {e}"))
+    parse_verified_range(&source).map_err(|e| format!("{}: {e}", e.code()))
 }
 
 fn load_signer(path: &str) -> Result<EventSigner, String> {
