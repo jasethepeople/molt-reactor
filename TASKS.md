@@ -11,13 +11,15 @@
 - [x] Add current depth and both conflicting reactor names to structured errors.
 - [x] Enforce i64-only payload/definition numbers and implement canonical JSON bytes.
 - [x] Validate strict VerifiedRange shape and exact replay metadata; add `Engine::verify`.
-- [x] Add regression tests; `cargo test --all-targets` passes 58 integration tests; demo, release build, formatting, and strict Clippy pass.
+- [x] Add regression tests; 58 Rust integration tests, demo, release build, formatting, and strict Clippy pass.
 
 ## Phase 3 — Conformance vectors
 - [x] Add eight versioned JSON vectors covering emit, gas, conflict, depth, replay, deliver scoping, orphan marker, and out-of-i64.
-- [x] Add `tests/conformance.rs` and `docs/CONFORMANCE.md`; run the conformance target and commit.
+- [x] Add `tests/conformance.rs` and `docs/CONFORMANCE.md`; all vectors match expected output/error behavior.
 
 ## Phase 4 — SpotSignal local MVP
-- [ ] Build the API, database migrations, bot, PWA, and deployment docs with privacy safeguards.
-- [ ] Run available tests and local stack checks; record any infrastructure/token blockers.
-- [ ] Do not publicly deploy location-bearing reports without an explicit privacy/safety review.
+- [x] Build the API, PostGIS migration and least-privilege bootstrap, optional Telegram bot, PWA, and privacy/deployment docs.
+- [x] Run 17 app tests with PostGIS; clean npm install; syntax checks; zero production dependency advisories; browser/API and DB-storage smoke checks.
+- [x] Parse/inspect Compose configuration; record Docker/Compose absence and missing Telegram token in `spot-signal/docs/FINAL_REPORT.md`.
+- [x] Keep the default local-only and activity reports off; no real data or public deployment.
+- [ ] Final full-suite check, commit/push Phase 4 and update `STATE.md`, then create `molt-reactor.zip`.

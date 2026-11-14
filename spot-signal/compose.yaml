@@ -1,0 +1,79 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    environment:
+      POSTGRES_DB: spotsignal
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    volumes:
+      - spotsignal-db:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d spotsignal"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8080
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      SPOTSIGNAL_STORE: postgres
+      DATABASE_URL: postgres://spotsignal_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD}@db:5432/spotsignal
+      APP_HMAC_SECRET: ${APP_HMAC_SECRET:?set APP_HMAC_SECRET}
+      MODERATION_TOKEN: ${MODERATION_TOKEN:-}
+      BOT_INGEST_TOKEN: ${BOT_INGEST_TOKEN:-}
+      ACTIVITY_ALERTS_ENABLED: ${ACTIVITY_ALERTS_ENABLED:-false}
+      COORD_FUZZ_DEGREES: ${COORD_FUZZ_DEGREES:-0.0005}
+      SENSITIVE_CELL_MULTIPLIER: ${SENSITIVE_CELL_MULTIPLIER:-6}
+      RESOURCE_CELL_MULTIPLIER: ${RESOURCE_CELL_MULTIPLIER:-2}
+      PUBLISH_DELAY_MS: ${PUBLISH_DELAY_MS:-900000}
+      ACTIVITY_PUBLISH_DELAY_MS: ${ACTIVITY_PUBLISH_DELAY_MS:-3600000}
+    ports:
+      - "127.0.0.1:${HOST_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  telegram-bot:
+    profiles: ["telegram"]
+    build: .
+    command: ["node", "src/bot.mjs"]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      SPOTSIGNAL_API_URL: http://app:8080
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN to enable the telegram profile}
+      BOT_INGEST_TOKEN: ${BOT_INGEST_TOKEN:?set BOT_INGEST_TOKEN to enable the telegram profile}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  spotsignal-db:

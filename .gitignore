@@ -1,2 +1,8 @@
 /target/
+/spot-signal/node_modules/
+/spot-signal/.env
+/spot-signal/.env.*
+!/spot-signal/.env.example
+/spot-signal/coverage/
 *.tmp
+/molt-reactor.zip

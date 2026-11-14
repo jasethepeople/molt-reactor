@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#183a35">
+    <meta name="description" content="A privacy-first map of community-reported resources and conditions.">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/vendor/leaflet.css">
+    <link rel="stylesheet" href="/styles.css">
+    <title>SpotSignal — Community conditions</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="SpotSignal home">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span>SpotSignal</span>
+      </a>
+      <span class="topbar-note">Community conditions, not people</span>
+    </header>
+    <main class="layout">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">A community-built field guide</p>
+        <h1 id="page-title">Find what’s useful nearby.</h1>
+        <p class="lede">Share time-limited information about resources and conditions. Reports are coarse-mapped before they are stored.</p>
+        <div class="privacy-notice" role="note">
+          <strong>Protect people first.</strong>
+          <span>Do not report a person, a sleeping place, names, photos, or identifying details. No free-text notes are collected. Activity reports are off unless explicitly enabled and opted into.</span>
+        </div>
+      </section>
+
+      <section class="map-panel" aria-label="Community map">
+        <div class="map-toolbar">
+          <div>
+            <h2>Community map</h2>
+            <p id="map-help">Pins show approximate areas, not exact locations.</p>
+          </div>
+          <div class="map-actions">
+            <button id="tile-toggle" class="button button-quiet" type="button" aria-pressed="false">Load street map</button>
+            <button id="refresh" class="button button-quiet" type="button">Refresh map</button>
+          </div>
+        </div>
+        <div id="map" role="application" aria-label="Map. Choose an approximate area by clicking. Location access is not requested."></div>
+        <p class="map-attribution">Street map is optional. Loading it contacts OpenStreetMap, which can see your IP address and the map area requested. Tiles © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a>.</p>
+      </section>
+
+      <div class="content-grid">
+        <section class="card" aria-labelledby="report-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Contribute</p>
+              <h2 id="report-heading">Share a condition</h2>
+            </div>
+          </div>
+          <p class="helper">Choose a category, then click the map or enter an approximate point. The server snaps it to a broad grid before storage.</p>
+          <form id="report-form">
+            <label for="category">Category</label>
+            <select id="category" name="category" required></select>
+            <label for="latitude">Approximate latitude</label>
+            <input id="latitude" name="latitude" type="number" min="-90" max="90" step="any" inputmode="decimal" required>
+            <label for="longitude">Approximate longitude</label>
+            <input id="longitude" name="longitude" type="number" min="-180" max="180" step="any" inputmode="decimal" required>
+            <label for="confidence">How sure are you?</label>
+            <select id="confidence" name="confidence">
+              <option value="1">Not sure</option>
+              <option value="2" selected>Fairly sure</option>
+              <option value="3">Very sure</option>
+            </select>
+            <label id="activity-opt-in-row" class="checkbox-row hidden">
+              <input id="activity-opt-in" type="checkbox">
+              <span>I’m choosing to share a time-sensitive condition. I will not identify a person.</span>
+            </label>
+            <button id="submit-report" class="button button-primary" type="submit">Share approximate report</button>
+            <p id="report-status" class="status" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+
+        <section id="activity-panel" class="card hidden" aria-labelledby="activity-heading">
+          <p class="eyebrow">Optional</p>
+          <h2 id="activity-heading">Show time-sensitive reports</h2>
+          <p class="helper">Activity reports stay hidden unless you opt in. Your alert area is stored only as a coarse cell, expires within a day, and is never used for device location tracking.</p>
+          <label for="activity-radius">Approximate alert radius</label>
+          <select id="activity-radius">
+            <option value="1000">1 km</option>
+            <option value="3000" selected>3 km</option>
+            <option value="5000">5 km</option>
+          </select>
+          <button id="activity-toggle" class="button button-secondary" type="button">Enable activity view</button>
+          <p id="activity-status" class="status" role="status" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <section class="reports-section" aria-labelledby="reports-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Recently shared</p>
+            <h2 id="reports-heading">Reports</h2>
+          </div>
+        </div>
+        <div id="reports" class="report-list" aria-live="polite"><p class="helper">Loading reports…</p></div>
+      </section>
+    </main>
+    <footer class="footer">
+      <p>Reports expire automatically. This tool is not emergency support. If someone is in immediate danger, contact local emergency services.</p>
+      <p>No account, advertising, analytics, or precise browser location.</p>
+    </footer>
+    <script src="/vendor/leaflet.js" defer></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

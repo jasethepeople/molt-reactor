@@ -77,4 +77,8 @@ Output events retain the standard MOLT event structure. A reserved `_molt_reacto
 
 The eight v1.1 JSON conformance vectors and their update policy are documented in [docs/CONFORMANCE.md](docs/CONFORMANCE.md).
 
+## SpotSignal MVP
+
+A separate local-only PWA, Fastify API, PostGIS store, and optional Telegram bot lives in [`spot-signal/`](spot-signal/README.md). It reports coarse, short-lived environmental conditions and resources; it is not for locating people. See its [privacy notes](spot-signal/docs/PRIVACY.md) and [local deployment guide](spot-signal/docs/DEPLOYMENT.md). The web container binds to loopback, activity reports are off by default, and no public deployment has been made.
+
 Dedicated to Aaron Swartz and to a best friend lost in 2025.

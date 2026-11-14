@@ -1,34 +1,22 @@
 # State
 
-## Baseline
-- Repository: `jasethepeople/molt-reactor`, clean `main`, synchronized with `origin/main`.
-- Baseline checks: `cargo test` — 39 passed; `cargo run -- demo` — ✅, 4 inputs → 3 outputs, replay-identical.
+## Repository
+- Repository: `jasethepeople/molt-reactor`, branch `main`.
+- Phases 1–3 are committed and pushed. Phase 4 implementation and verification are complete; the Phase 4 commit/push and final ZIP remain.
 
 ## Phase 1 — SPEC v1.1
-- Status: complete; spec is version 1.1 and now pins the JSON array range shape, canonical JSON, replay marker, chain depth, error taxonomy, and required semantic details.
-- Verification: `cargo test` — 39 passed; `cargo run -- demo` — passed; `git diff --check` — passed.
-- Spec/implementation gaps identified here were addressed and closed in Phase 2; this phase intentionally changed documentation only.
+- Complete. The specification pins canonical JSON/i64 boundaries, strict verified-range and replay-marker validation, stable error codes, trigger-depth and `escrow_action` deliver semantics, and `Engine::verify`.
 
 ## Phase 2 — Rust alignment
-- Status: complete; implementation, tests, and documentation are verified and pushed to `origin/main` at `e7d2e42`.
-- `cargo test --all-targets`: 58 integration tests passed.
-- `cargo run --quiet -- demo`: passed; 4 inputs → 3 outputs, replay identical, gas 82/256.
-- `cargo build --release`, `cargo fmt --all -- --check`, and `cargo clippy --all-targets --all-features -- -D warnings`: passed.
-- Canonical JSON/i64 boundaries, strict range and replay-marker validation, stable error codes, chain depth and deliver scoping, and `Engine::verify` are implemented.
+- Complete. 58 integration tests, the escrow demo, release build, formatting, and strict Clippy pass.
 
-## Phase 3 — Conformance vectors
-- Status: complete; eight versioned v1.1 vectors and the exact-comparison harness are implemented and pushed to `origin/main` at `b90635c`.
-- Verification: `cargo test --test conformance` — passed; `cargo test --all-targets` — 58 integration tests plus the conformance target passed; formatting, strict Clippy, release build, and `git diff --check` passed.
+## Phase 3 — Conformance
+- Complete. Eight versioned JSON vectors cover emit, gas, conflict, depth, replay, deliver scoping, orphan markers, and out-of-i64 payloads; the harness passes.
 
-## Phase 4 — SpotSignal
-- Status: not started. No Telegram bot token or production database credentials have been found.
-- Public deployment: intentionally not attempted; rough-sleeper location data requires a privacy/safety review and explicit deployment authorization.
-
-## Acceptance status
-- MOLT v1.1 documentation: complete.
-- Rust implementation aligned: complete; all 58 integration tests pass.
-- Eight conformance vectors: complete; all eight match their expected outputs and error codes.
-- SpotSignal local MVP: pending.
+## Phase 4 — SpotSignal local MVP
+- Implemented in `spot-signal/`: Fastify API, PostGIS migration with a least-privilege app role, privacy-first PWA, optional fixed-format Telegram bot, Compose files, tests, and deployment/privacy docs.
+- Verified 17 SpotSignal tests against a disposable local PostGIS database, plus a browser/API smoke test; synthetic data and temporary database objects were removed.
+- Docker/Compose and a Telegram bot token are unavailable here. The Compose YAML was parsed, but the container stack and Telegram polling were not launched. No public deployment or real report data was created. See `spot-signal/docs/FINAL_REPORT.md`.
 
 ## Next
-Re-read STATE.md, TASKS.md, and DECISIONS.md; then begin Phase 4 as a local-only MVP unless a safe, authorized deployment path is explicitly available.
+Commit and push the verified Phase 4 files, create and inspect `molt-reactor.zip`, then record the final archive path.
