@@ -1,0 +1,60 @@
+{
+  "expected": {
+    "error_code": null,
+    "gas_used": {},
+    "new_events": [],
+    "state": {
+      "other": {
+        "[\"sample-1\"]": {
+          "action": "deliver",
+          "id": "sample-1"
+        }
+      }
+    }
+  },
+  "id": "deliver-scope",
+  "operation": "run",
+  "range": {
+    "events": [
+      {
+        "actor": "vector-input",
+        "hash": "a80da30f3c5caadd3355eee9c4b51f71ee3f4ece677b101c7412445136f2d1a1",
+        "payload": {
+          "action": "deliver",
+          "id": "sample-1"
+        },
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "pub_key": "6b734a8eff246fe734b38d4046c148eee5f04fe87b3a0a423955a77956de066b",
+        "seq": 0,
+        "sig": "78913f944e6433632b9d8819e5efa514adb3fe2a736b7267d24789f583de51d0eb0acca00dc4735deaef50e7fadeeb4c71f5527c25bf9501f7e598b5ff7e8208",
+        "ts": 100,
+        "type": "other_action"
+      }
+    ],
+    "head": [
+      0,
+      "a80da30f3c5caadd3355eee9c4b51f71ee3f4ece677b101c7412445136f2d1a1"
+    ]
+  },
+  "reactors": [
+    {
+      "gas_budget": 128,
+      "max_trigger_depth": 4,
+      "name": "other",
+      "rules": [],
+      "state_key": [
+        "/id"
+      ],
+      "trigger": {
+        "event_type": "other_action"
+      },
+      "version": 1
+    }
+  ],
+  "signer": {
+    "actor": "molt-reactor:vector",
+    "seed_hex": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+  },
+  "spec_version": "1.1",
+  "vector_version": 1
+}

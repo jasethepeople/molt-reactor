@@ -1,0 +1,32 @@
+{
+  "expected": {
+    "error_code": "E_PARSE"
+  },
+  "id": "out-of-i64",
+  "operation": "parse_range",
+  "range": {
+    "events": [
+      {
+        "actor": "vector-input",
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "payload": {
+          "amount": 9223372036854775808
+        },
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "pub_key": "",
+        "seq": 0,
+        "sig": "",
+        "ts": 100,
+        "type": "input"
+      }
+    ],
+    "head": [
+      0,
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  "reactors": [],
+  "signer": null,
+  "spec_version": "1.1",
+  "vector_version": 1
+}

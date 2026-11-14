@@ -14,8 +14,8 @@
 - [x] Add regression tests; `cargo test --all-targets` passes 58 integration tests; demo, release build, formatting, and strict Clippy pass.
 
 ## Phase 3 — Conformance vectors
-- [ ] Add eight versioned JSON vectors covering emit, gas, conflict, depth, replay, deliver scoping, orphan marker, and out-of-i64.
-- [ ] Add `tests/conformance.rs` and `docs/CONFORMANCE.md`; run the conformance target and commit.
+- [x] Add eight versioned JSON vectors covering emit, gas, conflict, depth, replay, deliver scoping, orphan marker, and out-of-i64.
+- [x] Add `tests/conformance.rs` and `docs/CONFORMANCE.md`; run the conformance target and commit.
 
 ## Phase 4 — SpotSignal local MVP
 - [ ] Build the API, database migrations, bot, PWA, and deployment docs with privacy safeguards.

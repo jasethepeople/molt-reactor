@@ -17,7 +17,8 @@
 - Canonical JSON/i64 boundaries, strict range and replay-marker validation, stable error codes, chain depth and deliver scoping, and `Engine::verify` are implemented.
 
 ## Phase 3 — Conformance vectors
-- Status: not started.
+- Status: complete; eight versioned v1.1 vectors and the exact-comparison harness are implemented.
+- Verification: `cargo test --test conformance` — passed; `cargo test --all-targets` — 58 integration tests plus the conformance target passed; formatting, strict Clippy, release build, and `git diff --check` passed.
 
 ## Phase 4 — SpotSignal
 - Status: not started. No Telegram bot token or production database credentials have been found.
@@ -26,8 +27,8 @@
 ## Acceptance status
 - MOLT v1.1 documentation: complete.
 - Rust implementation aligned: complete; all 58 integration tests pass.
-- Eight conformance vectors: pending.
+- Eight conformance vectors: complete; all eight match their expected outputs and error codes.
 - SpotSignal local MVP: pending.
 
 ## Next
-Re-read STATE.md, TASKS.md, and DECISIONS.md; then begin Phase 3 conformance vectors.
+Commit and push the verified Phase 3 vectors, then re-read STATE.md, TASKS.md, and DECISIONS.md before Phase 4.

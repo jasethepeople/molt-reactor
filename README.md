@@ -75,4 +75,6 @@ Output events retain the standard MOLT event structure. A reserved `_molt_reacto
 
 `canonical_json` exposes the pinned MOLT payload serializer; `parse_verified_range` enforces the array-form head, strict range shape, and i64 payload-number bound. See `SPEC.md` Version 1.1 for byte-level canonical JSON, stable error codes, and replay semantics.
 
+The eight v1.1 JSON conformance vectors and their update policy are documented in [docs/CONFORMANCE.md](docs/CONFORMANCE.md).
+
 Dedicated to Aaron Swartz and to a best friend lost in 2025.

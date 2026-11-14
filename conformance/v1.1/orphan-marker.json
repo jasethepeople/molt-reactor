@@ -1,0 +1,72 @@
+{
+  "expected": {
+    "error_code": "E_MARKER_INVALID",
+    "gas_used": {},
+    "new_events": [],
+    "state": {}
+  },
+  "id": "orphan-marker",
+  "operation": "run",
+  "range": {
+    "events": [
+      {
+        "actor": "molt-reactor:vector",
+        "hash": "0c95e230080448760cb5ba32997cdc4b93be10c374528db173a048e8b8ea082e",
+        "payload": {
+          "_molt_reactor": {
+            "name": "marker",
+            "rule_index": 0,
+            "trigger_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "version": 1
+          }
+        },
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "pub_key": "ed6a47a39da869b5446155e40b2d93f1e3f0167be26732bae7a3ef9d8e3a3fd3",
+        "seq": 1,
+        "sig": "57c5055f42bee5a3d3e52b21ee0bfed6faaf67a3959c43e32b09766f89541b8ecf5ac8b0591b13a8033e50acbfeca9712831449f96dadffa1c54a0a6ae4e8e04",
+        "ts": 101,
+        "type": "result"
+      }
+    ],
+    "head": [
+      1,
+      "0c95e230080448760cb5ba32997cdc4b93be10c374528db173a048e8b8ea082e"
+    ]
+  },
+  "reactors": [
+    {
+      "gas_budget": 128,
+      "max_trigger_depth": 4,
+      "name": "marker",
+      "rules": [
+        {
+          "emit": {
+            "claims": [],
+            "payload": {
+              "x": 1
+            },
+            "type": "result"
+          },
+          "when": {
+            "op": "payload_eq",
+            "path": "/go",
+            "value": true
+          }
+        }
+      ],
+      "state_key": [
+        "/id"
+      ],
+      "trigger": {
+        "event_type": "input"
+      },
+      "version": 1
+    }
+  ],
+  "signer": {
+    "actor": "molt-reactor:vector",
+    "seed_hex": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+  },
+  "spec_version": "1.1",
+  "vector_version": 1
+}

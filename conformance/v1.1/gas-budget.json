@@ -1,0 +1,68 @@
+{
+  "expected": {
+    "error_code": "E_GAS",
+    "gas_used": {},
+    "new_events": [],
+    "state": {}
+  },
+  "id": "gas-budget",
+  "operation": "run",
+  "range": {
+    "events": [
+      {
+        "actor": "vector-input",
+        "hash": "308467aa8a53b671ca8ecc1cb115c74ee6fc98b47540c4f898a944ae6bc938a9",
+        "payload": {
+          "go": true,
+          "id": "sample-1"
+        },
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "pub_key": "6b734a8eff246fe734b38d4046c148eee5f04fe87b3a0a423955a77956de066b",
+        "seq": 0,
+        "sig": "9899823139129205c73495c6c9641725fd0527d5737141ba8799240b050cdb49d6cfd834c5fd16fe9fdbd0bdde8ea70fe147435304573e8e4f2334b9d828370e",
+        "ts": 100,
+        "type": "input"
+      }
+    ],
+    "head": [
+      0,
+      "308467aa8a53b671ca8ecc1cb115c74ee6fc98b47540c4f898a944ae6bc938a9"
+    ]
+  },
+  "reactors": [
+    {
+      "gas_budget": 7,
+      "max_trigger_depth": 4,
+      "name": "meter",
+      "rules": [
+        {
+          "emit": {
+            "claims": [],
+            "payload": {
+              "x": 1
+            },
+            "type": "result"
+          },
+          "when": {
+            "op": "payload_eq",
+            "path": "/go",
+            "value": true
+          }
+        }
+      ],
+      "state_key": [
+        "/id"
+      ],
+      "trigger": {
+        "event_type": "input"
+      },
+      "version": 1
+    }
+  ],
+  "signer": {
+    "actor": "molt-reactor:vector",
+    "seed_hex": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+  },
+  "spec_version": "1.1",
+  "vector_version": 1
+}

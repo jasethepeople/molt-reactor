@@ -1,0 +1,69 @@
+{
+  "expected": {
+    "error_code": "E_DEPTH",
+    "gas_used": {},
+    "new_events": [],
+    "state": {}
+  },
+  "id": "trigger-depth",
+  "operation": "run",
+  "range": {
+    "events": [
+      {
+        "actor": "vector-input",
+        "hash": "7b222cd33fefaf239d44455dbef9a72bac2f729dc599f9b9ddee6dbcf4a04c71",
+        "payload": {
+          "id": "sample-1",
+          "tick": true
+        },
+        "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "pub_key": "6b734a8eff246fe734b38d4046c148eee5f04fe87b3a0a423955a77956de066b",
+        "seq": 0,
+        "sig": "133b01e8edfbfd17eabced32167908538bf71c4e8f4f9508d8f8d79642652aa90d3536135f5374d55ed98c4178812271d0cdcac3ad3ea9c8916cf23cf015dc04",
+        "ts": 100,
+        "type": "tick"
+      }
+    ],
+    "head": [
+      0,
+      "7b222cd33fefaf239d44455dbef9a72bac2f729dc599f9b9ddee6dbcf4a04c71"
+    ]
+  },
+  "reactors": [
+    {
+      "gas_budget": 4096,
+      "max_trigger_depth": 2,
+      "name": "loop",
+      "rules": [
+        {
+          "emit": {
+            "claims": [],
+            "payload": {
+              "id": "sample-1",
+              "tick": true
+            },
+            "type": "tick"
+          },
+          "when": {
+            "op": "payload_eq",
+            "path": "/tick",
+            "value": true
+          }
+        }
+      ],
+      "state_key": [
+        "/id"
+      ],
+      "trigger": {
+        "event_type": "tick"
+      },
+      "version": 1
+    }
+  ],
+  "signer": {
+    "actor": "molt-reactor:vector",
+    "seed_hex": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+  },
+  "spec_version": "1.1",
+  "vector_version": 1
+}
