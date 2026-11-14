@@ -17,7 +17,7 @@
 - Canonical JSON/i64 boundaries, strict range and replay-marker validation, stable error codes, chain depth and deliver scoping, and `Engine::verify` are implemented.
 
 ## Phase 3 — Conformance vectors
-- Status: complete; eight versioned v1.1 vectors and the exact-comparison harness are implemented.
+- Status: complete; eight versioned v1.1 vectors and the exact-comparison harness are implemented and pushed to `origin/main` at `b90635c`.
 - Verification: `cargo test --test conformance` — passed; `cargo test --all-targets` — 58 integration tests plus the conformance target passed; formatting, strict Clippy, release build, and `git diff --check` passed.
 
 ## Phase 4 — SpotSignal
@@ -31,4 +31,4 @@
 - SpotSignal local MVP: pending.
 
 ## Next
-Commit and push the verified Phase 3 vectors, then re-read STATE.md, TASKS.md, and DECISIONS.md before Phase 4.
+Re-read STATE.md, TASKS.md, and DECISIONS.md; then begin Phase 4 as a local-only MVP unless a safe, authorized deployment path is explicitly available.
