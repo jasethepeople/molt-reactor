@@ -1,6 +1,6 @@
 # molt-reactor specification
 
-Version 1.0. This document defines the behavior of the Rust reactor DSL and engine in this crate.
+Version 1.1. This document defines the behavior of the Rust reactor DSL and engine in this crate.
 
 ## 1. Purpose and MOLT boundary
 
@@ -22,9 +22,29 @@ pub struct MoltEvent {
 }
 ```
 
-`GENESIS_HASH` is 64 zeroes. To build an event hash, concatenate `seq.to_be_bytes()`, `ts.to_be_bytes()`, UTF-8 event-type bytes, compact `payload.to_string()` UTF-8 bytes, actor bytes, previous-hash string bytes, and public-key string bytes, in that order; SHA-256 the concatenation. The Ed25519 signature signs the resulting 32 digest bytes. JSON objects are serialized with lexicographically ordered keys by the crate's default `serde_json::Map` configuration. Outputs use the triggering event's timestamp, the configured reactor signer, a sequence immediately following the ledger head, and the head hash as `prev_hash`.
+`GENESIS_HASH` is 64 zeroes. To build an event hash, concatenate `seq.to_be_bytes()`, `ts.to_be_bytes()`, UTF-8 event-type bytes, canonical JSON payload bytes (§1a), actor bytes, previous-hash string bytes, and public-key string bytes, in that order; SHA-256 the concatenation. The Ed25519 signature signs the resulting 32 digest bytes. The output event's `ts` is the `ts` of the range event that ultimately triggered it. Chained triggers do not update `ts`.
 
-The `VerifiedRange.head` denotes the inclusive last `(seq, hash)`. An empty range uses `(0, GENESIS_HASH)` and its first output has sequence zero. A nonempty range begins output sequence at `head.seq + 1`.
+The `VerifiedRange.head` denotes the inclusive last `(seq, hash)` and serializes as a JSON array, not an object. The first output of a run uses the input range head's hash as `prev_hash`; each subsequent output uses the previous output's hash. When the head is GENESIS, the first output's sequence is 0. A nonempty range begins output sequence at `head[0] + 1`.
+
+### 1a. Canonical JSON
+
+Canonical JSON is UTF-8 with no BOM and no trailing newline. Object keys are sorted ascending by UTF-8 byte sequence of the key string; this is the authoritative `serde_json::Map` behavior without the `preserve_order` feature. There is no whitespace; separators are `,` and `:`. Numbers are integers only: no decimal point, exponent, leading `+`, or leading zeroes except the literal `0`; negative zero serializes as `0`. Every JSON integer MUST be in `[i64::MIN, i64::MAX]`; out-of-range values fail with `E_PARSE` at every parse boundary (reactor definitions, payload literals, and input/output event payloads). Strings use RFC 8259 escaping: a quotation mark is emitted as backslash followed by quotation mark; a backslash is emitted as two backslashes; each U+0000–U+001F is emitted as backslash, `u`, then four lowercase hexadecimal digits (`00xx`). All other code points are emitted as raw UTF-8. The only literals are `true`, `false`, and `null`. Canonical bytes are the UTF-8 encoding of canonical JSON text, with no framing. Envelope fields `MoltEvent.seq` and `MoltEvent.ts` remain `u64` and are not subject to the payload integer bound.
+
+### 1b. VerifiedRange schema
+
+The serialized schema is:
+
+```json
+{"events":[<MoltEvent>,...],"head":[<u64 seq>,"<64 lowercase hex>"]}
+```
+
+Example serialized range (the abbreviated event/hash text is illustrative):
+
+```json
+{"events":[...],"head":[42,"abc...64hex..."]}
+```
+
+Both keys are required; extra keys fail with `E_PARSE`. Events are ordered by strictly increasing `seq` with no gaps. For a nonempty range, `head[0]` MUST equal the last event's `seq` and `head[1]` MUST equal its `hash`; mismatch fails with `E_RANGE_SHAPE`. The empty range is `{"events":[],"head":[0,"0000000000000000000000000000000000000000000000000000000000000000"]}`. Empty events with any non-GENESIS head fail with `E_RANGE_SHAPE`. This crate does not verify `prev_hash` links; that is the upstream verifier's obligation.
 
 ## 2. DSL
 
@@ -71,7 +91,9 @@ Conditions are tagged objects with these operations:
 
 ### State
 
-`state_key` pointer values are collected from each triggering input and compact-JSON-encoded as an ordered array, partitioning state by reactor name and key. For each trigger, object-valued input payload fields merge into that reactor's state (new input fields replace same-named old ones). A scalar payload is stored under `_value`. An `escrow_action` with action `deliver` additionally sets state field `delivered` to `true`. State is updated transactionally and is reconstructible by replaying the trigger inputs in ledger order.
+`state_key` pointer values are collected from each triggering input and compact canonical-JSON-encoded as an ordered array, partitioning state by reactor name and key. For each trigger, object-valued input payload fields merge into that reactor's state. Object merging is shallow at the top level: a top-level key in the input replaces the same-named key in state wholesale, including when both values are objects. Nested objects are not recursively merged. A scalar payload is stored under `_value`. As a compatibility exception, when the matching reactor's `trigger.event_type` is `escrow_action` and the triggering event's payload `action` is the string `deliver`, the interpreter sets state field `delivered` to `true` before evaluating rules. This is the single interpreter exception to the “no hardcoded behavior” rule. A future `state_writes` DSL feature will replace it; the exception will be deprecated in a minor version bump. State is updated transactionally and is reconstructible by replaying the trigger inputs in ledger order.
+
+The per-reactor state map is keyed by the compact canonical JSON serialization of the `state_key` pointer values as an array. `Engine::snapshot_state()` returns `{<reactor_name>: {<partition_key_json>: <state_value>}}`.
 
 A `state:/pointer` expression reads the current accumulated state after the triggering event has been merged. Missing state-key values are errors; missing condition paths simply do not match.
 
@@ -108,11 +130,11 @@ The one unit charges the output event; each payload byte costs one unit. The cou
 
 The DSL has no loops or user functions, so evaluation work is bounded by the validated condition/expression tree and input size; gas specifically meters emitted output and its payload, not input parsing or every interpreter operation. The 1 MiB definition limit and 64-level AST limit bound reactor-definition work. Very large upstream ranges still require upstream resource limits.
 
-The initial range events have trigger depth zero. Every generated output is queued at parent depth plus one. If a reactor would process an event at a depth greater than its own `max_trigger_depth`, the run aborts with `TriggerDepth`. This bounds self-trigger and cross-reactor cycles. The default limit is 8.
+The initial range events have chain depth zero. Every generated output is queued at parent depth plus one. `max_trigger_depth` is the maximum chain depth of events that the reactor will process; if any matching reactor's limit is less than the event's current depth, the run aborts with `TriggerDepth`. This bounds self-trigger and cross-reactor cycles. The default limit is 8.
 
 ## 5. Conflict detection
 
-Each emission may declare `claims`, an array of state fields it intends to mutate. For every output, the engine pairs each claim with that invocation's canonical `state_key` value. After evaluating and validating the full run, but before commit, it checks claims in deterministic output order. If two different reactor names claim the same `(state_key, field)`, the complete run returns `ConflictError`; neither invocation's events nor state are committed. A reactor may claim the same field multiple times itself. Definitions that omit `claims` make no explicit state-field claims and therefore cannot conflict through this mechanism.
+Each emission may declare `claims`, an array of state fields it intends to mutate. `claims` does not write state. State mutation occurs only via input payload merging (§3). `claims` exists solely to abort conflicting runs before commit. For every output, the engine pairs each claim with that invocation's canonical `state_key` value. After evaluating and validating the full run, but before commit, it checks claims in deterministic output order. If two different reactor names claim the same `(state_key, field)`, the complete run returns `ConflictError`; neither invocation's events nor state are committed. A reactor may claim the same field multiple times itself. Definitions that omit `claims` make no explicit state-field claims and therefore cannot conflict through this mechanism.
 
 ## 6. Atomicity, validation, and signing
 
@@ -120,9 +142,30 @@ Each emission may declare `claims`, an array of state fields it intends to mutat
 
 `SchemaCheck` and `PolicyCheck` are integration seams; the crate provides `PermissiveCheck` for examples. Production callers should supply checks backed by their MOLT schema/policy layers. Input checks are applied only to events whose type matches a registered trigger; upstream verification remains mandatory.
 
+### 6a. Stable error taxonomy
+
+Every `EngineError` has a stable string `code()` for conformance assertions. `E_PARSE` covers malformed JSON, wrong types, unknown keys, and out-of-`i64` integers. `E_ANALYZE` covers forbidden tokens, floats, DSL violations, and size/depth limits. `E_RANGE_SHAPE` covers non-contiguous sequences, head mismatch, and invalid empty-range heads. `E_SCHEMA` and `E_POLICY` carry the failing event index and reason. `E_SIGNER_MISSING` means an output was required without a configured signer. `E_SIG` carries the output event index for an Ed25519 signing failure. `E_GAS` carries reactor, used, and budget. `E_DEPTH` carries reactor, current depth, and limit. `E_CONFLICT` carries both reactor names, state key, and field. `E_DUP` carries sequence and hash. `E_OVERFLOW` carries operation and operands. `E_STATE_KEY` carries reactor and missing pointer. `E_MARKER_INVALID` carries event index and reason. `E_REPLAY_MISMATCH` identifies replay outputs that are missing or differ from deterministic evaluation. These codes, rather than human-readable messages, are the stable machine interface.
+
 ## 7. Idempotency and replay metadata
 
-A rule firing identity is the tuple `(reactor name, version, trigger event hash, rule index)`. The engine records it in a deterministic ordered set after staging the output. Calling `run` again on the same input range with the same engine therefore emits zero additional events and leaves the derived state unchanged. The identity is also embedded in output payloads under the reserved `_molt_reactor` object, so a fresh engine can reconstruct the fired set when replaying the complete output-inclusive ledger. Replay markers are accepted only when the marker names a registered reactor/version/rule, the event type matches that rule's output type, its trigger hash identifies an earlier matching trigger event in the range, and the output event's actor/public key match the configured signer. During replay, the engine recomputes the rule's output payload at that point in state history and requires an exact type, payload, timestamp, actor, and public-key match; a duplicate, orphaned, or mismatched marker aborts the transaction.
+A rule firing identity is the tuple `(reactor name, version, trigger event hash, rule index)`. It is encoded in the output payload as `{"_molt_reactor":{"name":"<string>","version":<integer ≥ 1>,"trigger_hash":"<64 lowercase hex>","rule_index":<integer ≥ 0>}}`. The marker object contains exactly these four keys; any missing, extra, malformed, or mismatched field fails with `E_MARKER_INVALID`. `trigger_hash` is the triggering event's `hash` field, not its `sig`.
+
+The exact metadata shape is:
+
+```json
+{
+  "_molt_reactor": {
+    "name": "<string>",
+    "version": <integer >= 1>,
+    "trigger_hash": "<64 lowercase hex>",
+    "rule_index": <integer >= 0>
+  }
+}
+```
+
+The object MUST contain exactly these four keys. `trigger_hash` is the hash field of the triggering event, not its `sig`. Any malformed or mismatched marker fails with `E_MARKER_INVALID`. The engine records the identity in a deterministic ordered set after staging the output. Calling `run` again on the same input range with the same engine therefore emits zero additional events and leaves the derived state unchanged. A fresh engine can reconstruct the fired set when replaying the complete output-inclusive ledger. Replay markers are accepted only when the marker names a registered reactor/version/rule, the event type matches that rule's output type, its trigger hash identifies an earlier matching trigger event in the range, and the output event's actor/public key match the configured signer. During replay, the engine recomputes the rule's output payload at that point in state history and requires an exact type, payload, timestamp, actor, and public-key match; a duplicate, orphaned, or mismatched marker aborts the transaction. Recorded output events in a replay range are trusted by the upstream verifier. `molt-reactor` does not re-verify their `sig` or recompute their `hash`; it recomputes the payload and verifies the `_molt_reactor` metadata tuple only.
+
+When the evaluated payload is not a JSON object, it is wrapped as `{"_molt_reactor": <metadata>, "value": <payload>}` so that the reserved key is always a sibling. Object payloads have `_molt_reactor` inserted directly; a user-defined payload that already contains the key is rejected with `E_ANALYZE`.
 
 This guarantee has a necessary boundary: an input-only range contains no evidence of outputs committed elsewhere. A fresh process given only the original input range must emit those outputs again. Restart-safe exactly-once replay requires replaying the ledger including the prior reactor output events and configuring the same output signer. `_molt_reactor` is reserved and cannot be supplied in a user output template.
 
