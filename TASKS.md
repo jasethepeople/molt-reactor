@@ -22,4 +22,5 @@
 - [x] Run 17 app tests with PostGIS; clean npm install; syntax checks; zero production dependency advisories; browser/API and DB-storage smoke checks.
 - [x] Parse/inspect Compose configuration; record Docker/Compose absence and missing Telegram token in `spot-signal/docs/FINAL_REPORT.md`.
 - [x] Keep the default local-only and activity reports off; no real data or public deployment.
-- [ ] Final full-suite check, commit/push Phase 4 and update `STATE.md`, then create `molt-reactor.zip`.
+- [x] Confirm the latest public `main` contains Phase 4 and run the available Rust and Node test suites.
+- [x] Refresh the documented acceptance chain and prepare the workspace ZIP; no public service was deployed.

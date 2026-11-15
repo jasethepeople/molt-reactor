@@ -7,12 +7,10 @@ A deterministic, gas-metered Rust engine that turns verified MOLT ledger events 
 Requires a current stable Rust toolchain.
 
 ```sh
-cargo run -- demo
-cargo test
-cargo run --release -- analyze --reactor demos/nondet-hashmap.json
+cargo run -- demo && cargo test && ! cargo run --release -- analyze --reactor demos/nondet-hashmap.json
 ```
 
-The demo command exits successfully and ends with a `✅` summary. The last analyze command is expected to exit nonzero: it proves that the deliberately unsafe HashMap reactor is rejected. The companion float and clock traps are `demos/nondet-float.json` and `demos/nondet-clock.json`.
+This acceptance chain exits successfully only if the demo and tests pass and the analyzer rejects the deliberately unsafe HashMap reactor. The `!` marks that rejection as the expected result. The companion float and clock traps are `demos/nondet-float.json` and `demos/nondet-clock.json`.
 
 ## Write a reactor in under a minute
 
